@@ -39,15 +39,30 @@ function formatMoney(value) {
   return `${CURRENCY}${Number(value || 0).toFixed(2)}`;
 }
 
-function getWeeksPaid(player, currentWeek) {
+function getWeeksPaid(player, currentWeek, roundStarted) {
   if (player.left_after_week !== null && player.left_after_week !== undefined) {
     return player.left_after_week;
   }
-  return currentWeek;
+  return roundStarted ? currentWeek : 0;
 }
 
 function isActive(player) {
   return player.left_after_week === null || player.left_after_week === undefined;
+}
+
+function groupDrawsByWeek(drawn) {
+  const grouped = {};
+  for (const item of drawn) {
+    const wk = item.week || 1;
+    if (!grouped[wk]) grouped[wk] = [];
+    grouped[wk].push(item);
+  }
+  return Object.entries(grouped)
+    .map(([week, nums]) => ({
+      week: Number(week),
+      nums: nums.sort((a, b) => a.value - b.value),
+    }))
+    .sort((a, b) => a.week - b.week);
 }
 
 export default function App() {
@@ -74,6 +89,7 @@ export default function App() {
 
   const roundStarted = drawn.length > 0;
   const activeCount = players.filter(isActive).length;
+  const drawGroups = useMemo(() => groupDrawsByWeek(drawn), [drawn]);
 
   useEffect(() => {
     loadAll();
@@ -123,18 +139,18 @@ export default function App() {
 
   const totalMembershipFees = useMemo(() => {
     return players.reduce(
-      (sum, p) => sum + getWeeksPaid(p, club.week) * MEMBERSHIP_FEE,
+      (sum, p) => sum + getWeeksPaid(p, club.week, roundStarted) * MEMBERSHIP_FEE,
       0
     );
-  }, [players, club.week]);
+  }, [players, club.week, roundStarted]);
 
   const currentJackpot = useMemo(() => {
     const paid = players.reduce(
-      (sum, p) => sum + getWeeksPaid(p, club.week) * JACKPOT_FEE,
+      (sum, p) => sum + getWeeksPaid(p, club.week, roundStarted) * JACKPOT_FEE,
       0
     );
     return paid + Number(club.carryover || 0);
-  }, [players, club.week, club.carryover]);
+  }, [players, club.week, club.carryover, roundStarted]);
 
   const winnerPrizeEach =
     club.winner_names.length > 0
@@ -158,6 +174,7 @@ export default function App() {
     const { data, error } = await supabase
       .from("draws")
       .select("*")
+      .order("week", { ascending: true })
       .order("created_at", { ascending: true });
 
     if (!error && data) setDrawn(data);
@@ -211,7 +228,7 @@ export default function App() {
     }
 
     if (roundStarted) {
-      alert("No new players can be added after the round starts");
+      alert("No new players can be added after the first weekly draw");
       return;
     }
 
@@ -312,6 +329,8 @@ export default function App() {
       return;
     }
 
+    const drawWeek = club.week;
+
     setIsDrawing(true);
     setCurrentDraw([]);
     setLastDrawIds([]);
@@ -320,6 +339,7 @@ export default function App() {
     const newEntries = numbers.map((n) => ({
       id: crypto.randomUUID(),
       value: n,
+      week: drawWeek,
     }));
 
     newEntries.forEach((entry, index) => {
@@ -330,6 +350,7 @@ export default function App() {
 
     setTimeout(async () => {
       const { error } = await supabase.from("draws").insert(newEntries);
+
       if (error) {
         setIsDrawing(false);
         alert("Draw failed");
@@ -338,13 +359,13 @@ export default function App() {
 
       const updatedDrawn = [...drawn, ...newEntries];
       setLastDrawIds(newEntries.map((x) => x.id));
-      await finishRoundCheck(updatedDrawn);
+      await finishWeekCheck(updatedDrawn, drawWeek);
       setIsDrawing(false);
       setCurrentDraw([]);
     }, newEntries.length * 450 + 250);
   }
 
-  async function finishRoundCheck(updatedDrawn) {
+  async function finishWeekCheck(updatedDrawn, drawWeek) {
     const activePlayers = players.filter(isActive);
 
     const winners = activePlayers.filter((p) => {
@@ -356,6 +377,7 @@ export default function App() {
 
     if (winners.length > 0) {
       const winnerList = winners.map((w) => w.name);
+
       await updateClub({
         winner_found: true,
         winner_names: winnerList,
@@ -372,7 +394,7 @@ export default function App() {
       }
     } else {
       await updateClub({
-        week: club.week + 1,
+        week: drawWeek + 1,
       });
     }
   }
@@ -553,7 +575,7 @@ export default function App() {
               onClick={drawNumbers}
               disabled={isDrawing || activeCount === 0}
             >
-              {isDrawing ? "Drawing..." : "Draw Numbers"}
+              {isDrawing ? "Drawing..." : `Draw Week ${club.week}`}
             </button>
             <button style={greyBtn} onClick={newRound} disabled={isDrawing}>
               New Round
@@ -566,7 +588,7 @@ export default function App() {
 
         <div style={statsGrid}>
           <StatCard
-            title="Week"
+            title="Current Week"
             value={club.week}
             bg="linear-gradient(135deg,#f59e0b,#f97316)"
           />
@@ -603,14 +625,12 @@ export default function App() {
             border: "2px solid #fdba74",
           }}
         >
-          <h3 style={{ marginTop: 0 }}>Progressive Jackpot</h3>
+          <h3 style={{ marginTop: 0 }}>Weekly Payment Logic</h3>
           <p style={{ marginBottom: 0, lineHeight: 1.7 }}>
-            Each week players contribute <strong>{formatMoney(JACKPOT_FEE)}</strong> to the
-            jackpot pool. Six numbers are drawn weekly. Numbers that match a
-            player's ticket remain marked until all six numbers are matched. The
-            jackpot continues to grow every week until one or more players
-            complete all six numbers. If multiple players win in the same draw,
-            the jackpot is split equally.
+            Every weekly draw creates a new paid week for all active players.
+            Each active player contributes <strong>{formatMoney(WEEKLY_TOTAL)}</strong> per week
+            ({formatMoney(MEMBERSHIP_FEE)} membership + {formatMoney(JACKPOT_FEE)} jackpot).
+            Drawn numbers are saved against the week they were drawn.
           </p>
         </div>
 
@@ -644,6 +664,7 @@ export default function App() {
                 drawn={drawn}
                 week={club.week}
                 jackpotFee={JACKPOT_FEE}
+                roundStarted={roundStarted}
                 adminUnlocked={false}
                 isDrawing={false}
                 onWithdraw={() => {}}
@@ -685,7 +706,7 @@ export default function App() {
               }}
             >
               {currentDraw.length === 0 && !isDrawing && (
-                <div style={{ opacity: 0.6 }}>Press Draw Numbers to begin</div>
+                <div style={{ opacity: 0.6 }}>Press Draw Week {club.week} to begin</div>
               )}
 
               {currentDraw.map((entry) => (
@@ -712,25 +733,42 @@ export default function App() {
             </div>
           </div>
 
-          <h2 style={{ marginTop: 0, color: "#1e3a8a" }}>Numbers Drawn</h2>
+          <h2 style={{ marginTop: 0, color: "#1e3a8a" }}>Numbers Drawn By Week</h2>
 
-          {drawn.length === 0 ? (
+          {drawGroups.length === 0 ? (
             <p style={{ color: "#666" }}>No numbers drawn yet</p>
           ) : (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              {drawn.map((entry) => (
+            <div style={{ display: "grid", gap: 14 }}>
+              {drawGroups.map((group) => (
                 <div
-                  key={entry.id}
+                  key={group.week}
                   style={{
-                    ...ball,
-                    background: ballColor(entry.value),
-                    color: "#fff",
-                    boxShadow: lastDrawIds.includes(entry.id)
-                      ? "0 0 0 4px rgba(250,204,21,0.45), 0 8px 18px rgba(0,0,0,0.18)"
-                      : "0 6px 14px rgba(0,0,0,0.18)",
+                    border: "2px solid #e5e7eb",
+                    borderRadius: 14,
+                    padding: 12,
+                    background: "#fff",
                   }}
                 >
-                  {entry.value}
+                  <div style={{ fontWeight: "bold", marginBottom: 10 }}>
+                    Week {group.week}
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                    {group.nums.map((entry) => (
+                      <div
+                        key={entry.id}
+                        style={{
+                          ...ball,
+                          background: ballColor(entry.value),
+                          color: "#fff",
+                          boxShadow: lastDrawIds.includes(entry.id)
+                            ? "0 0 0 4px rgba(250,204,21,0.45), 0 8px 18px rgba(0,0,0,0.18)"
+                            : "0 6px 14px rgba(0,0,0,0.18)",
+                        }}
+                      >
+                        {entry.value}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
@@ -741,7 +779,7 @@ export default function App() {
             {club.winner_found
               ? "Winner found"
               : roundStarted
-              ? "In progress"
+              ? `In progress — week ${club.week}`
               : "Open for entries"}
           </p>
 
@@ -781,7 +819,7 @@ export default function App() {
               }}
             >
               <strong>Private club only.</strong> Only the club admin can add
-              players. Membership is capped at {MAX_PLAYERS} players.
+              players before the first weekly draw. Membership is capped at {MAX_PLAYERS} players.
             </div>
 
             {players.length >= MAX_PLAYERS && (
@@ -833,13 +871,10 @@ export default function App() {
               <li>
                 <strong>{formatMoney(JACKPOT_FEE)}</strong> goes into the progressive jackpot pool
               </li>
-              <li>Private club membership</li>
-              <li>Membership capped at {MAX_PLAYERS} players</li>
-              <li>
-                The jackpot rolls over each week until a player matches all <strong>6 numbers</strong>
-              </li>
-              <li>Numbers are drawn weekly and matches are permanently marked</li>
+              <li>Every draw represents one new paid week</li>
+              <li>Numbers are drawn weekly and saved against that week</li>
               <li>Players keep the same numbers for the entire round</li>
+              <li>Membership capped at {MAX_PLAYERS} players</li>
               <li>The winner receives <strong>100% of the jackpot pool</strong></li>
               <li>If multiple players match all 6 numbers in the same draw, the jackpot is split equally</li>
               <li>Players may withdraw but previous contributed weeks remain in the jackpot</li>
@@ -861,6 +896,7 @@ export default function App() {
                   drawn={drawn}
                   week={club.week}
                   jackpotFee={JACKPOT_FEE}
+                  roundStarted={roundStarted}
                   adminUnlocked={adminUnlocked}
                   isDrawing={isDrawing}
                   onWithdraw={() => withdrawPlayer(player.id)}
@@ -905,6 +941,7 @@ function PlayerCard({
   drawn,
   week,
   jackpotFee,
+  roundStarted,
   adminUnlocked,
   isDrawing,
   onWithdraw,
@@ -913,7 +950,7 @@ function PlayerCard({
     drawn.some((d) => d.value === n)
   );
   const active = isActive(player);
-  const paidWeeks = getWeeksPaid(player, week);
+  const paidWeeks = getWeeksPaid(player, week, roundStarted);
   const jackpotPaid = paidWeeks * jackpotFee;
 
   return (
