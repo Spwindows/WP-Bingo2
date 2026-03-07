@@ -7,7 +7,7 @@ const CURRENCY = "£";
 const ADMIN_PIN = "1234";
 const INVITE_CODE = "BINGO2026";
 const MAX_PLAYERS = 50;
-const STORAGE_KEY = "wp-bingo-club-v8";
+const STORAGE_KEY = "wp-bingo-club-v9";
 
 function randomDraw() {
   const nums = [];
@@ -29,6 +29,23 @@ function ballColor(num) {
     "#db2777",
   ];
   return colors[num % colors.length];
+}
+
+function formatMoney(value) {
+  return `${CURRENCY}${Number(value).toFixed(2)}`;
+}
+
+function dayToIndex(day) {
+  const map = {
+    Sunday: 0,
+    Monday: 1,
+    Tuesday: 2,
+    Wednesday: 3,
+    Thursday: 4,
+    Friday: 5,
+    Saturday: 6,
+  };
+  return map[day];
 }
 
 export default function App() {
@@ -57,7 +74,9 @@ export default function App() {
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
+    if (!raw) return;
+
+    try {
       const saved = JSON.parse(raw);
       setPlayers(saved.players || []);
       setDrawn(saved.drawn || []);
@@ -72,6 +91,8 @@ export default function App() {
       setAutoDrawDay(saved.autoDrawDay || "Friday");
       setAutoDrawTime(saved.autoDrawTime || "19:00");
       setLastAutoDrawStamp(saved.lastAutoDrawStamp || "");
+    } catch {
+      // ignore bad saved data
     }
   }, []);
 
@@ -123,6 +144,18 @@ export default function App() {
 
   const activeCount = players.filter(isActive).length;
 
+  const totalMembershipFees = useMemo(() => {
+    return players.reduce((sum, p) => sum + getWeeksPaid(p) * MEMBERSHIP_FEE, 0);
+  }, [players, week]);
+
+  const currentJackpot = useMemo(() => {
+    const paid = players.reduce((sum, p) => sum + getWeeksPaid(p) * JACKPOT_FEE, 0);
+    return paid + carryover;
+  }, [players, week, carryover]);
+
+  const winnerPrizeEach =
+    winnerNames.length > 0 ? currentJackpot / winnerNames.length : currentJackpot;
+
   useEffect(() => {
     if (!roundStarted) return;
     if (winnerFound) return;
@@ -141,9 +174,9 @@ export default function App() {
       setRoundCancelled(true);
 
       alert(
-        `Round cancelled — no active players remain.\nCarryover jackpot ${CURRENCY}${(
+        `Round cancelled — no active players remain.\nCarryover jackpot ${formatMoney(
           carryover + jackpotPaid
-        ).toFixed(2)}`
+        )}`
       );
     }
   }, [players, roundStarted, winnerFound, roundCancelled, week, carryover]);
@@ -174,19 +207,6 @@ export default function App() {
     roundCancelled,
     isDrawing,
   ]);
-
-  function dayToIndex(day) {
-    const map = {
-      Sunday: 0,
-      Monday: 1,
-      Tuesday: 2,
-      Wednesday: 3,
-      Thursday: 4,
-      Friday: 5,
-      Saturday: 6,
-    };
-    return map[day];
-  }
 
   function shouldAutoDrawNow() {
     if (winnerFound || roundCancelled || isDrawing) return false;
@@ -229,7 +249,7 @@ export default function App() {
     e.preventDefault();
 
     if (players.length >= MAX_PLAYERS) {
-      alert("Club is full (50 members max)");
+      alert(`Club is full (${MAX_PLAYERS} members max)`);
       return;
     }
 
@@ -335,9 +355,7 @@ export default function App() {
       alert(
         winners.length === 1
           ? `Winner: ${winnerList[0]}`
-          : `Winners: ${winnerList.join(", ")}\nEach wins ${CURRENCY}${splitPrize.toFixed(
-              2
-            )}`
+          : `Winners: ${winnerList.join(", ")}\nEach wins ${formatMoney(splitPrize)}`
       );
     } else {
       setWeek((w) => w + 1);
@@ -486,18 +504,6 @@ export default function App() {
     setLastAutoDrawStamp("");
   }
 
-  const totalMembershipFees = useMemo(() => {
-    return players.reduce((sum, p) => sum + getWeeksPaid(p) * MEMBERSHIP_FEE, 0);
-  }, [players, week]);
-
-  const currentJackpot = useMemo(() => {
-    const paid = players.reduce((sum, p) => sum + getWeeksPaid(p) * JACKPOT_FEE, 0);
-    return paid + carryover;
-  }, [players, week, carryover]);
-
-  const winningsEach =
-    winnerNames.length > 0 ? currentJackpot / winnerNames.length : currentJackpot;
-
   return (
     <div
       style={{
@@ -540,10 +546,8 @@ export default function App() {
             <div>
               <h1 style={{ margin: 0, fontSize: 36 }}>Weekly Bingo Club</h1>
               <div style={{ marginTop: 6, opacity: 0.95 }}>
-                {CURRENCY}
-                {WEEKLY_TOTAL} weekly • {CURRENCY}
-                {MEMBERSHIP_FEE} membership • {CURRENCY}
-                {JACKPOT_FEE} jackpot
+                {formatMoney(WEEKLY_TOTAL)} weekly • {formatMoney(MEMBERSHIP_FEE)} membership •{" "}
+                {formatMoney(JACKPOT_FEE)} jackpot
               </div>
               <div style={{ marginTop: 6, opacity: 0.95 }}>
                 Invite only • Max {MAX_PLAYERS} members
@@ -597,12 +601,14 @@ export default function App() {
           />
           <StatCard
             title="Current Jackpot"
-            value={`${CURRENCY}${currentJackpot.toFixed(2)}`}
+            value={formatMoney(currentJackpot)}
             bg="linear-gradient(135deg,#3b82f6,#2563eb)"
           />
           <StatCard
-            title={winnerNames.length > 1 ? "Winnings Each" : "Winnings"}
-            value={`${CURRENCY}${(winnerNames.length > 1 ? winningsEach : currentJackpot).toFixed(2)}`}
+            title={winnerNames.length > 1 ? "Winner Prize Each" : "Winner Prize"}
+            value={formatMoney(
+              winnerNames.length > 1 ? winnerPrizeEach : currentJackpot
+            )}
             bg="linear-gradient(135deg,#8b5cf6,#7c3aed)"
           />
         </div>
@@ -616,14 +622,21 @@ export default function App() {
               fontWeight: "bold",
             }}
           >
-            Carryover jackpot: {CURRENCY}
-            {carryover.toFixed(2)}
+            Carryover jackpot: {formatMoney(carryover)}
           </div>
         )}
 
         <div style={{ ...card, background: "#ecfeff" }}>
           <h2 style={{ marginTop: 0, color: "#155e75" }}>Auto Draw</h2>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
             <select
               value={autoDrawDay}
               onChange={(e) => setAutoDrawDay(e.target.value)}
@@ -659,8 +672,9 @@ export default function App() {
             </button>
           </div>
 
-          <p style={{ marginTop: 10, marginBottom: 0 }}>
-            Auto draw runs when this app is open on the admin device at the scheduled time.
+          <p style={{ marginTop: 10, marginBottom: 0, lineHeight: 1.6 }}>
+            Auto draw only runs if this app is open on the admin device at the
+            scheduled time.
           </p>
         </div>
 
@@ -675,11 +689,12 @@ export default function App() {
         >
           <h3 style={{ marginTop: 0 }}>Progressive Jackpot</h3>
           <p style={{ marginBottom: 0, lineHeight: 1.7 }}>
-            Each week players contribute <strong>{CURRENCY}{JACKPOT_FEE}</strong> to the jackpot pool.
-            Six numbers are drawn weekly. Numbers that match a player's ticket remain
-            marked until all six numbers are matched. The jackpot continues to grow
-            every week until one or more players complete all six numbers. If
-            multiple players win in the same draw, the jackpot is split equally.
+            Each week players contribute <strong>{formatMoney(JACKPOT_FEE)}</strong> to the
+            jackpot pool. Six numbers are drawn weekly. Numbers that match a
+            player's ticket remain marked until all six numbers are matched. The
+            jackpot continues to grow every week until one or more players
+            complete all six numbers. If multiple players win in the same draw,
+            the jackpot is split equally.
           </p>
         </div>
 
@@ -794,8 +809,10 @@ export default function App() {
               }}
             >
               {winnerNames.length === 1
-                ? `Winner: ${winnerNames[0]} — winnings ${CURRENCY}${currentJackpot.toFixed(2)}`
-                : `Winners: ${winnerNames.join(", ")} — each wins ${CURRENCY}${winningsEach.toFixed(2)}`}
+                ? `Winner: ${winnerNames[0]} — winner prize ${formatMoney(currentJackpot)}`
+                : `Winners: ${winnerNames.join(", ")} — each wins ${formatMoney(
+                    winnerPrizeEach
+                  )}`}
             </div>
           )}
 
@@ -810,7 +827,8 @@ export default function App() {
                 fontWeight: "bold",
               }}
             >
-              Round cancelled — no active players remain. Jackpot carried into next round.
+              Round cancelled — no active players remain. Jackpot carried into next
+              round.
             </div>
           )}
         </div>
@@ -818,6 +836,21 @@ export default function App() {
         <div style={twoCol}>
           <div style={{ ...card, background: "#fff7ed" }}>
             <h2 style={{ marginTop: 0, color: "#c2410c" }}>Join</h2>
+
+            <div
+              style={{
+                marginBottom: 12,
+                padding: 12,
+                borderRadius: 12,
+                background: "#fffbeb",
+                border: "1px solid #fcd34d",
+                fontSize: 14,
+                lineHeight: 1.6,
+              }}
+            >
+              <strong>Private club only.</strong> You need a valid invite code to
+              join. Membership is capped at {MAX_PLAYERS} players.
+            </div>
 
             {players.length >= MAX_PLAYERS && (
               <p style={{ color: "#b91c1c", fontWeight: "bold" }}>
@@ -851,7 +884,7 @@ export default function App() {
                 />
                 <button
                   type="submit"
-                  style={yellowBtn}
+                  style={bigYellowBtn}
                   disabled={players.length >= MAX_PLAYERS}
                 >
                   Add Player
@@ -864,13 +897,13 @@ export default function App() {
             <h2 style={{ marginTop: 0, color: "#166534" }}>Rules & Membership</h2>
             <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
               <li>
-                Weekly contribution is <strong>{CURRENCY}{WEEKLY_TOTAL}</strong>
+                Weekly contribution is <strong>{formatMoney(WEEKLY_TOTAL)}</strong>
               </li>
               <li>
-                <strong>{CURRENCY}{MEMBERSHIP_FEE}</strong> is a club membership/admin fee
+                <strong>{formatMoney(MEMBERSHIP_FEE)}</strong> is a club membership/admin fee
               </li>
               <li>
-                <strong>{CURRENCY}{JACKPOT_FEE}</strong> goes into the progressive jackpot pool
+                <strong>{formatMoney(JACKPOT_FEE)}</strong> goes into the progressive jackpot pool
               </li>
               <li>Invite only membership</li>
               <li>Membership capped at {MAX_PLAYERS} players</li>
@@ -960,10 +993,7 @@ export default function App() {
 
                     <div style={{ color: "#374151", fontSize: 14, lineHeight: 1.6 }}>
                       <div>Weeks contributed: {paidWeeks}</div>
-                      <div>
-                        Jackpot contributed: {CURRENCY}
-                        {jackpotPaid.toFixed(2)}
-                      </div>
+                      <div>Jackpot contributed: {formatMoney(jackpotPaid)}</div>
                       <div>
                         Status: {active ? "Active" : `Stopped after week ${p.leftAfterWeek}`}
                       </div>
@@ -1005,20 +1035,11 @@ export default function App() {
                     {item.winners.join(", ")}
                   </strong>
                   <div>Week won: {item.weekWon}</div>
-                  <div>
-                    Jackpot: {CURRENCY}
-                    {item.jackpot}
-                  </div>
+                  <div>Jackpot: {formatMoney(item.jackpot)}</div>
                   {item.winners.length > 1 ? (
-                    <div>
-                      Each won: {CURRENCY}
-                      {item.splitPrize}
-                    </div>
+                    <div>Each won: {formatMoney(item.splitPrize)}</div>
                   ) : (
-                    <div>
-                      Winnings: {CURRENCY}
-                      {item.splitPrize}
-                    </div>
+                    <div>Winner prize: {formatMoney(item.splitPrize)}</div>
                   )}
                   <div style={{ color: "#666", fontSize: 13 }}>{item.when}</div>
                 </div>
@@ -1034,8 +1055,7 @@ export default function App() {
             color: "#1e3a8a",
           }}
         >
-          <strong>Membership fees collected:</strong> {CURRENCY}
-          {totalMembershipFees.toFixed(2)}
+          <strong>Membership fees collected:</strong> {formatMoney(totalMembershipFees)}
         </div>
       </div>
 
@@ -1107,7 +1127,7 @@ const input = {
   maxWidth: 360,
   display: "block",
   marginBottom: 10,
-  padding: 12,
+  padding: 14,
   borderRadius: 12,
   border: "2px solid #fed7aa",
   fontSize: 15,
@@ -1126,7 +1146,7 @@ const darkBtn = {
   background: "#111827",
   color: "#fff",
   border: "none",
-  padding: "11px 14px",
+  padding: "12px 16px",
   borderRadius: 12,
   cursor: "pointer",
   fontWeight: "bold",
@@ -1136,7 +1156,7 @@ const greyBtn = {
   background: "#e5e7eb",
   color: "#111827",
   border: "none",
-  padding: "11px 14px",
+  padding: "12px 16px",
   borderRadius: 12,
   cursor: "pointer",
   fontWeight: "bold",
@@ -1146,17 +1166,28 @@ const yellowBtn = {
   background: "linear-gradient(135deg,#f59e0b,#f97316)",
   color: "white",
   border: "none",
-  padding: "11px 14px",
+  padding: "12px 16px",
   borderRadius: 12,
   cursor: "pointer",
   fontWeight: "bold",
+};
+
+const bigYellowBtn = {
+  background: "linear-gradient(135deg,#f59e0b,#f97316)",
+  color: "white",
+  border: "none",
+  padding: "14px 20px",
+  borderRadius: 12,
+  cursor: "pointer",
+  fontWeight: "bold",
+  fontSize: 16,
 };
 
 const dangerBtn = {
   background: "linear-gradient(135deg,#ef4444,#dc2626)",
   color: "#fff",
   border: "none",
-  padding: "10px 14px",
+  padding: "12px 16px",
   borderRadius: 12,
   cursor: "pointer",
   fontWeight: "bold",
