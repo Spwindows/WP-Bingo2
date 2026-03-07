@@ -39,15 +39,15 @@ function formatMoney(value) {
   return `${CURRENCY}${Number(value || 0).toFixed(2)}`;
 }
 
-function getWeeksPaid(player, currentWeek, roundStarted) {
+function isActive(player) {
+  return player.left_after_week === null || player.left_after_week === undefined;
+}
+
+function getWeeksPaid(player, completedWeeks) {
   if (player.left_after_week !== null && player.left_after_week !== undefined) {
     return player.left_after_week;
   }
-  return roundStarted ? currentWeek : 0;
-}
-
-function isActive(player) {
-  return player.left_after_week === null || player.left_after_week === undefined;
+  return completedWeeks;
 }
 
 function groupDrawsByWeek(drawn) {
@@ -70,7 +70,7 @@ export default function App() {
   const [drawn, setDrawn] = useState([]);
   const [club, setClub] = useState({
     id: null,
-    week: 1,
+    week: 0,
     carryover: 0,
     winner_found: false,
     winner_names: [],
@@ -139,18 +139,18 @@ export default function App() {
 
   const totalMembershipFees = useMemo(() => {
     return players.reduce(
-      (sum, p) => sum + getWeeksPaid(p, club.week, roundStarted) * MEMBERSHIP_FEE,
+      (sum, p) => sum + getWeeksPaid(p, club.week) * MEMBERSHIP_FEE,
       0
     );
-  }, [players, club.week, roundStarted]);
+  }, [players, club.week]);
 
   const currentJackpot = useMemo(() => {
     const paid = players.reduce(
-      (sum, p) => sum + getWeeksPaid(p, club.week, roundStarted) * JACKPOT_FEE,
+      (sum, p) => sum + getWeeksPaid(p, club.week) * JACKPOT_FEE,
       0
     );
     return paid + Number(club.carryover || 0);
-  }, [players, club.week, club.carryover, roundStarted]);
+  }, [players, club.week, club.carryover]);
 
   const winnerPrizeEach =
     club.winner_names.length > 0
@@ -190,6 +190,7 @@ export default function App() {
     if (!error && data) {
       setClub({
         ...data,
+        week: Number(data.week || 0),
         winner_names: data.winner_names || [],
       });
     }
@@ -329,7 +330,7 @@ export default function App() {
       return;
     }
 
-    const drawWeek = club.week;
+    const newWeek = club.week + 1;
 
     setIsDrawing(true);
     setCurrentDraw([]);
@@ -339,7 +340,7 @@ export default function App() {
     const newEntries = numbers.map((n) => ({
       id: crypto.randomUUID(),
       value: n,
-      week: drawWeek,
+      week: newWeek,
     }));
 
     newEntries.forEach((entry, index) => {
@@ -359,13 +360,16 @@ export default function App() {
 
       const updatedDrawn = [...drawn, ...newEntries];
       setLastDrawIds(newEntries.map((x) => x.id));
-      await finishWeekCheck(updatedDrawn, drawWeek);
+
+      await updateClub({ week: newWeek });
+      await finishWeekCheck(updatedDrawn, newWeek);
+
       setIsDrawing(false);
       setCurrentDraw([]);
     }, newEntries.length * 450 + 250);
   }
 
-  async function finishWeekCheck(updatedDrawn, drawWeek) {
+  async function finishWeekCheck(updatedDrawn, completedWeek) {
     const activePlayers = players.filter(isActive);
 
     const winners = activePlayers.filter((p) => {
@@ -383,19 +387,21 @@ export default function App() {
         winner_names: winnerList,
       });
 
+      const jackpotAtWin =
+        players.reduce(
+          (sum, p) => sum + getWeeksPaid(p, completedWeek) * JACKPOT_FEE,
+          0
+        ) + Number(club.carryover || 0);
+
       if (winnerList.length === 1) {
-        alert(`Winner: ${winnerList[0]}`);
+        alert(`Winner: ${winnerList[0]} — prize ${formatMoney(jackpotAtWin)}`);
       } else {
         alert(
           `Winners: ${winnerList.join(", ")}\nEach wins ${formatMoney(
-            currentJackpot / winnerList.length
+            jackpotAtWin / winnerList.length
           )}`
         );
       }
-    } else {
-      await updateClub({
-        week: drawWeek + 1,
-      });
     }
   }
 
@@ -462,7 +468,7 @@ export default function App() {
       .neq("id", "00000000-0000-0000-0000-000000000000");
 
     await updateClub({
-      week: 1,
+      week: 0,
       winner_found: false,
       winner_names: [],
     });
@@ -493,7 +499,7 @@ export default function App() {
       .neq("id", "00000000-0000-0000-0000-000000000000");
 
     await updateClub({
-      week: 1,
+      week: 0,
       carryover: 0,
       winner_found: false,
       winner_names: [],
@@ -575,7 +581,7 @@ export default function App() {
               onClick={drawNumbers}
               disabled={isDrawing || activeCount === 0}
             >
-              {isDrawing ? "Drawing..." : `Draw Week ${club.week}`}
+              {isDrawing ? "Drawing..." : `Draw Week ${club.week + 1}`}
             </button>
             <button style={greyBtn} onClick={newRound} disabled={isDrawing}>
               New Round
@@ -588,7 +594,7 @@ export default function App() {
 
         <div style={statsGrid}>
           <StatCard
-            title="Current Week"
+            title="Weeks Completed"
             value={club.week}
             bg="linear-gradient(135deg,#f59e0b,#f97316)"
           />
@@ -627,10 +633,10 @@ export default function App() {
         >
           <h3 style={{ marginTop: 0 }}>Weekly Payment Logic</h3>
           <p style={{ marginBottom: 0, lineHeight: 1.7 }}>
-            Every weekly draw creates a new paid week for all active players.
-            Each active player contributes <strong>{formatMoney(WEEKLY_TOTAL)}</strong> per week
+            Every draw creates one new paid week for all active players. Each active
+            player contributes <strong>{formatMoney(WEEKLY_TOTAL)}</strong> per week
             ({formatMoney(MEMBERSHIP_FEE)} membership + {formatMoney(JACKPOT_FEE)} jackpot).
-            Drawn numbers are saved against the week they were drawn.
+            Drawn numbers are saved under the week they were drawn.
           </p>
         </div>
 
@@ -662,9 +668,8 @@ export default function App() {
               <PlayerCard
                 player={selectedPlayer}
                 drawn={drawn}
-                week={club.week}
+                completedWeeks={club.week}
                 jackpotFee={JACKPOT_FEE}
-                roundStarted={roundStarted}
                 adminUnlocked={false}
                 isDrawing={false}
                 onWithdraw={() => {}}
@@ -706,7 +711,7 @@ export default function App() {
               }}
             >
               {currentDraw.length === 0 && !isDrawing && (
-                <div style={{ opacity: 0.6 }}>Press Draw Week {club.week} to begin</div>
+                <div style={{ opacity: 0.6 }}>Press Draw Week {club.week + 1} to begin</div>
               )}
 
               {currentDraw.map((entry) => (
@@ -779,7 +784,7 @@ export default function App() {
             {club.winner_found
               ? "Winner found"
               : roundStarted
-              ? `In progress — week ${club.week}`
+              ? `In progress — ${club.week} week(s) completed`
               : "Open for entries"}
           </p>
 
@@ -871,7 +876,7 @@ export default function App() {
               <li>
                 <strong>{formatMoney(JACKPOT_FEE)}</strong> goes into the progressive jackpot pool
               </li>
-              <li>Every draw represents one new paid week</li>
+              <li>Every draw creates one new paid week</li>
               <li>Numbers are drawn weekly and saved against that week</li>
               <li>Players keep the same numbers for the entire round</li>
               <li>Membership capped at {MAX_PLAYERS} players</li>
@@ -894,9 +899,8 @@ export default function App() {
                   key={player.id}
                   player={player}
                   drawn={drawn}
-                  week={club.week}
+                  completedWeeks={club.week}
                   jackpotFee={JACKPOT_FEE}
-                  roundStarted={roundStarted}
                   adminUnlocked={adminUnlocked}
                   isDrawing={isDrawing}
                   onWithdraw={() => withdrawPlayer(player.id)}
@@ -939,9 +943,8 @@ export default function App() {
 function PlayerCard({
   player,
   drawn,
-  week,
+  completedWeeks,
   jackpotFee,
-  roundStarted,
   adminUnlocked,
   isDrawing,
   onWithdraw,
@@ -950,7 +953,7 @@ function PlayerCard({
     drawn.some((d) => d.value === n)
   );
   const active = isActive(player);
-  const paidWeeks = getWeeksPaid(player, week, roundStarted);
+  const paidWeeks = getWeeksPaid(player, completedWeeks);
   const jackpotPaid = paidWeeks * jackpotFee;
 
   return (
