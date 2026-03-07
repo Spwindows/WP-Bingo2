@@ -7,14 +7,36 @@ const supabase = createClient(
 );
 
 const CURRENCY = "£";
-const DEMO_USERS = [
-  "22222222-2222-2222-2222-222222222222", // Sean
-  "33333333-3333-3333-3333-333333333333", // Wayde
-  "44444444-4444-4444-4444-444444444444", // Sarah
-];
+const ADMIN_PIN = "1234";
 
 function formatMoney(value) {
   return `${CURRENCY}${Number(value || 0).toFixed(2)}`;
+}
+
+function shuffle(array) {
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function generateBingoCard() {
+  const cols = [
+    shuffle([...Array(15)].map((_, i) => i + 1)).slice(0, 5),
+    shuffle([...Array(15)].map((_, i) => i + 16)).slice(0, 5),
+    shuffle([...Array(15)].map((_, i) => i + 31)).slice(0, 5),
+    shuffle([...Array(15)].map((_, i) => i + 46)).slice(0, 5),
+    shuffle([...Array(15)].map((_, i) => i + 61)).slice(0, 5),
+  ];
+
+  const grid = Array.from({ length: 5 }, (_, row) =>
+    Array.from({ length: 5 }, (_, col) => cols[col][row])
+  );
+
+  grid[2][2] = "FREE";
+  return grid;
 }
 
 function flattenCard(cardNumbers) {
@@ -32,8 +54,7 @@ function pickRandomLockedNumbers(cardNumbers, unlockedNumbers, count) {
     (n) => !unlockedSet.has(String(n))
   );
 
-  const shuffled = [...available].sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, count);
+  return shuffle(available).slice(0, count);
 }
 
 function isUnlocked(value, unlockedNumbers) {
@@ -46,14 +67,14 @@ function getCompletedLines(cardNumbers, unlockedNumbers) {
 
   const lines = [];
 
-  for (let r = 0; r < 5; r++) {
+  for (let r = 0; r < 5; r += 1) {
     const row = cardNumbers[r];
     if (row.every((v) => isUnlocked(v, unlockedNumbers))) {
       lines.push({ type: "row", index: r });
     }
   }
 
-  for (let c = 0; c < 5; c++) {
+  for (let c = 0; c < 5; c += 1) {
     const col = [0, 1, 2, 3, 4].map((r) => cardNumbers[r][c]);
     if (col.every((v) => isUnlocked(v, unlockedNumbers))) {
       lines.push({ type: "col", index: c });
@@ -86,7 +107,7 @@ function cellIsHighlighted(cardNumbers, unlockedNumbers, rowIndex, colIndex) {
 
 export default function App() {
   const [profiles, setProfiles] = useState([]);
-  const [selectedUserId, setSelectedUserId] = useState(DEMO_USERS[0]);
+  const [selectedUserId, setSelectedUserId] = useState("");
 
   const [membership, setMembership] = useState(null);
   const [round, setRound] = useState(null);
@@ -100,6 +121,13 @@ export default function App() {
   const [selectedAnswer, setSelectedAnswer] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [newPlayerName, setNewPlayerName] = useState("");
+  const [newPlayerEmail, setNewPlayerEmail] = useState("");
+  const [newPlayerPlan, setNewPlayerPlan] = useState("standard");
+  const [addingPlayer, setAddingPlayer] = useState(false);
+  const [resettingChallenge, setResettingChallenge] = useState(false);
 
   const currentProfile = useMemo(
     () => profiles.find((p) => p.id === selectedUserId) || null,
@@ -116,19 +144,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (selectedUserId) {
-      loadUserData(selectedUserId);
+    if (selectedUserId && round?.id) {
+      loadUserData(selectedUserId, round.id, challenge?.id);
     }
-  }, [selectedUserId, round?.id]);
-
-  useEffect(() => {
-    if (round?.id) {
-      loadRoundData(round.id);
-    }
-  }, [round?.id]);
+  }, [selectedUserId, round?.id, challenge?.id]);
 
   async function loadBootData() {
-    await Promise.all([loadProfiles(), loadActiveRound()]);
+    const activeRound = await loadActiveRound();
+    await loadProfiles();
+    if (activeRound?.id) {
+      await loadRoundData(activeRound.id);
+    }
   }
 
   async function loadProfiles() {
@@ -138,8 +164,10 @@ export default function App() {
       .order("display_name", { ascending: true });
 
     if (data) {
-      const filtered = data.filter((p) => DEMO_USERS.includes(p.id) || p.is_admin);
-      setProfiles(filtered);
+      setProfiles(data);
+      if (!selectedUserId && data.length > 0) {
+        setSelectedUserId(data.find((p) => !p.is_admin)?.id || data[0].id);
+      }
     }
   }
 
@@ -152,43 +180,14 @@ export default function App() {
       .limit(1)
       .maybeSingle();
 
-    if (data) setRound(data);
-  }
-
-  async function loadUserData(userId) {
-    if (!userId || !round?.id) return;
-
-    const [membershipRes, cardRes, attemptRes] = await Promise.all([
-      supabase.from("memberships").select("*").eq("user_id", userId).maybeSingle(),
-      supabase
-        .from("bingo_cards")
-        .select("*")
-        .eq("user_id", userId)
-        .eq("round_id", round.id)
-        .maybeSingle(),
-      challenge?.id
-        ? supabase
-            .from("challenge_attempts")
-            .select("*")
-            .eq("user_id", userId)
-            .eq("challenge_id", challenge.id)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
-    ]);
-
-    if (membershipRes.data) setMembership(membershipRes.data);
-    else setMembership(null);
-
-    if (cardRes.data) setCard(cardRes.data);
-    else setCard(null);
-
-    if (attemptRes.data) setAttempt(attemptRes.data);
-    else setAttempt(null);
+    if (data) {
+      setRound(data);
+      return data;
+    }
+    return null;
   }
 
   async function loadRoundData(roundId) {
-    if (!roundId) return;
-
     const [challengeRes, leaderboardRes, prizesRes, winnersRes] = await Promise.all([
       supabase
         .from("daily_challenges")
@@ -214,45 +213,188 @@ export default function App() {
         .order("created_at", { ascending: false }),
     ]);
 
-    if (challengeRes.data) setChallenge(challengeRes.data);
-    else setChallenge(null);
-
-    if (leaderboardRes.data) {
-      const ranked = leaderboardRes.data.map((entry, index) => ({
+    setChallenge(challengeRes.data || null);
+    setLeaderboard(
+      (leaderboardRes.data || []).map((entry, index) => ({
         ...entry,
         display_rank: index + 1,
-      }));
-      setLeaderboard(ranked);
-    } else {
-      setLeaderboard([]);
-    }
+      }))
+    );
+    setPrizes(prizesRes.data || []);
+    setWinners(winnersRes.data || []);
+  }
 
-    if (prizesRes.data) setPrizes(prizesRes.data);
-    else setPrizes([]);
-
-    if (winnersRes.data) setWinners(winnersRes.data);
-    else setWinners([]);
-
-    if (selectedUserId && challengeRes.data) {
-      const attemptRes = await supabase
-        .from("challenge_attempts")
+  async function loadUserData(userId, roundId, challengeId) {
+    const [membershipRes, cardRes, attemptRes] = await Promise.all([
+      supabase.from("memberships").select("*").eq("user_id", userId).maybeSingle(),
+      supabase
+        .from("bingo_cards")
         .select("*")
-        .eq("user_id", selectedUserId)
-        .eq("challenge_id", challengeRes.data.id)
-        .maybeSingle();
+        .eq("user_id", userId)
+        .eq("round_id", roundId)
+        .maybeSingle(),
+      challengeId
+        ? supabase
+            .from("challenge_attempts")
+            .select("*")
+            .eq("user_id", userId)
+            .eq("challenge_id", challengeId)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
 
-      setAttempt(attemptRes.data || null);
-    }
+    setMembership(membershipRes.data || null);
+    setCard(cardRes.data || null);
+    setAttempt(attemptRes.data || null);
   }
 
   async function refreshAll() {
-    await loadActiveRound();
-    if (round?.id) {
-      await loadRoundData(round.id);
+    const activeRound = await loadActiveRound();
+    if (activeRound?.id) {
+      await loadRoundData(activeRound.id);
+      if (selectedUserId) {
+        const latestChallenge = await supabase
+          .from("daily_challenges")
+          .select("*")
+          .eq("round_id", activeRound.id)
+          .order("challenge_date", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        setChallenge(latestChallenge.data || null);
+        await loadUserData(selectedUserId, activeRound.id, latestChallenge.data?.id);
+      }
     }
-    if (selectedUserId) {
-      await loadUserData(selectedUserId);
+    await loadProfiles();
+  }
+
+  function unlockAdmin() {
+    const pin = window.prompt("Enter admin PIN");
+    if (pin === ADMIN_PIN) {
+      setAdminUnlocked(true);
+      setMessage("Admin unlocked.");
+    } else {
+      setMessage("Wrong PIN.");
     }
+  }
+
+  function lockAdmin() {
+    setAdminUnlocked(false);
+    setMessage("Admin locked.");
+  }
+
+  async function addPlayer() {
+    if (!adminUnlocked) {
+      setMessage("Unlock admin first.");
+      return;
+    }
+    if (!round?.id) {
+      setMessage("No active round found.");
+      return;
+    }
+    if (!newPlayerName.trim() || !newPlayerEmail.trim()) {
+      setMessage("Enter player name and email.");
+      return;
+    }
+
+    setAddingPlayer(true);
+    setMessage("");
+
+    const playerId = crypto.randomUUID();
+    const cardNumbers = generateBingoCard();
+
+    const { error: profileError } = await supabase.from("profiles").insert({
+      id: playerId,
+      display_name: newPlayerName.trim(),
+      email: newPlayerEmail.trim().toLowerCase(),
+      is_admin: false,
+    });
+
+    if (profileError) {
+      setAddingPlayer(false);
+      setMessage("Could not create profile. Email may already exist.");
+      return;
+    }
+
+    const { error: membershipError } = await supabase.from("memberships").insert({
+      user_id: playerId,
+      plan: newPlayerPlan,
+      status: "active",
+    });
+
+    if (membershipError) {
+      setAddingPlayer(false);
+      setMessage("Profile created, but membership failed.");
+      return;
+    }
+
+    const { error: leaderboardError } = await supabase.from("leaderboard_entries").insert({
+      user_id: playerId,
+      round_id: round.id,
+      points: 0,
+    });
+
+    if (leaderboardError) {
+      setAddingPlayer(false);
+      setMessage("Profile created, but leaderboard entry failed.");
+      return;
+    }
+
+    const { error: cardError } = await supabase.from("bingo_cards").insert({
+      user_id: playerId,
+      round_id: round.id,
+      card_numbers: cardNumbers,
+      unlocked_numbers: [],
+      completed: false,
+    });
+
+    if (cardError) {
+      setAddingPlayer(false);
+      setMessage("Profile created, but bingo card failed.");
+      return;
+    }
+
+    setNewPlayerName("");
+    setNewPlayerEmail("");
+    setNewPlayerPlan("standard");
+    setSelectedUserId(playerId);
+    setAddingPlayer(false);
+    setMessage("Player added successfully.");
+
+    await refreshAll();
+  }
+
+  async function resetTodaysChallenge() {
+    if (!adminUnlocked) {
+      setMessage("Unlock admin first.");
+      return;
+    }
+    if (!selectedUserId || !challenge?.id) {
+      setMessage("No player or challenge selected.");
+      return;
+    }
+
+    setResettingChallenge(true);
+    setMessage("");
+
+    const { error } = await supabase
+      .from("challenge_attempts")
+      .delete()
+      .eq("user_id", selectedUserId)
+      .eq("challenge_id", challenge.id);
+
+    if (error) {
+      setResettingChallenge(false);
+      setMessage("Could not reset challenge.");
+      return;
+    }
+
+    setAttempt(null);
+    setSelectedAnswer("");
+    setResettingChallenge(false);
+    setMessage("Today's challenge has been reset for this player.");
+
+    await refreshAll();
   }
 
   async function submitChallenge() {
@@ -357,7 +499,7 @@ export default function App() {
     setMessage(
       isCorrect
         ? `Correct! You earned ${rewardPoints} points and unlocked ${newlyUnlocked.length} number(s).`
-        : "Incorrect answer. Try again tomorrow."
+        : "Incorrect answer. Challenge recorded."
     );
 
     await refreshAll();
@@ -396,12 +538,20 @@ export default function App() {
             <div>
               <h1 style={{ margin: 0, fontSize: 34 }}>Skill Bingo Club</h1>
               <div style={{ marginTop: 6, opacity: 0.95 }}>
-                {CURRENCY}4.99 membership • Weekly challenge • Leaderboard • Jackpot prizes
+                £4.99 membership • Weekly challenge • Leaderboard • Jackpot prizes
               </div>
               <div style={{ marginTop: 6, opacity: 0.95 }}>
                 Unlock numbers through skill, not luck
               </div>
             </div>
+          </div>
+
+          <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {!adminUnlocked ? (
+              <button onClick={unlockAdmin} style={darkBtn}>Unlock Admin</button>
+            ) : (
+              <button onClick={lockAdmin} style={greyBtn}>Lock Admin</button>
+            )}
           </div>
         </div>
 
@@ -436,7 +586,7 @@ export default function App() {
             style={selectStyle}
           >
             {profiles
-              .filter((p) => DEMO_USERS.includes(p.id))
+              .filter((p) => !p.is_admin)
               .map((profile) => (
                 <option key={profile.id} value={profile.id}>
                   {profile.display_name}
@@ -445,20 +595,53 @@ export default function App() {
           </select>
 
           <div style={{ marginTop: 12, lineHeight: 1.7 }}>
-            <div>
-              <strong>Player:</strong> {currentProfile?.display_name || "-"}
-            </div>
-            <div>
-              <strong>Membership:</strong>{" "}
-              {activeMembership
-                ? `${membership.plan.toUpperCase()} (${membership.status})`
-                : "Inactive"}
-            </div>
-            <div>
-              <strong>Round:</strong> {round?.title || "-"}
-            </div>
+            <div><strong>Player:</strong> {currentProfile?.display_name || "-"}</div>
+            <div><strong>Membership:</strong> {activeMembership ? `${membership.plan.toUpperCase()} (${membership.status})` : "Inactive"}</div>
+            <div><strong>Round:</strong> {round?.title || "-"}</div>
           </div>
         </div>
+
+        {adminUnlocked && (
+          <div style={{ ...cardStyle, background: "#fff7ed" }}>
+            <h2 style={{ marginTop: 0, color: "#c2410c" }}>Add Player</h2>
+            <div style={{ display: "grid", gap: 10, maxWidth: 420 }}>
+              <input
+                value={newPlayerName}
+                onChange={(e) => setNewPlayerName(e.target.value)}
+                placeholder="Player name"
+                style={inputStyle}
+              />
+              <input
+                value={newPlayerEmail}
+                onChange={(e) => setNewPlayerEmail(e.target.value)}
+                placeholder="Player email"
+                style={inputStyle}
+              />
+              <select
+                value={newPlayerPlan}
+                onChange={(e) => setNewPlayerPlan(e.target.value)}
+                style={inputStyle}
+              >
+                <option value="standard">Standard</option>
+                <option value="vip">VIP</option>
+              </select>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button onClick={addPlayer} disabled={addingPlayer} style={primaryBtn}>
+                  {addingPlayer ? "Adding..." : "Add Player"}
+                </button>
+
+                <button
+                  onClick={resetTodaysChallenge}
+                  disabled={resettingChallenge || !selectedUserId || !challenge}
+                  style={dangerBtn}
+                >
+                  {resettingChallenge ? "Resetting..." : "Reset Today's Challenge"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div style={twoCol}>
           <div style={{ ...cardStyle, background: "#fff" }}>
@@ -514,15 +697,9 @@ export default function App() {
                 </div>
 
                 <div style={{ marginTop: 14, lineHeight: 1.7 }}>
-                  <div>
-                    <strong>Unlocked numbers:</strong> {(card.unlocked_numbers || []).length}
-                  </div>
-                  <div>
-                    <strong>Completed lines:</strong> {completedLines.length}
-                  </div>
-                  <div>
-                    <strong>Status:</strong> {hasBingo ? "BINGO achieved" : "Still in progress"}
-                  </div>
+                  <div><strong>Unlocked numbers:</strong> {(card.unlocked_numbers || []).length}</div>
+                  <div><strong>Completed lines:</strong> {completedLines.length}</div>
+                  <div><strong>Status:</strong> {hasBingo ? "BINGO achieved" : "Still in progress"}</div>
                 </div>
               </>
             ) : (
@@ -536,16 +713,9 @@ export default function App() {
             {challenge ? (
               <>
                 <div style={{ marginBottom: 12, lineHeight: 1.7 }}>
-                  <div>
-                    <strong>Title:</strong> {challenge.title}
-                  </div>
-                  <div>
-                    <strong>Date:</strong> {challenge.challenge_date}
-                  </div>
-                  <div>
-                    <strong>Reward:</strong> {challenge.reward_points} points +{" "}
-                    {challenge.reward_numbers} number(s)
-                  </div>
+                  <div><strong>Title:</strong> {challenge.title}</div>
+                  <div><strong>Date:</strong> {challenge.challenge_date}</div>
+                  <div><strong>Reward:</strong> {challenge.reward_points} points + {challenge.reward_numbers} number(s)</div>
                 </div>
 
                 <div
@@ -783,6 +953,15 @@ const selectStyle = {
   background: "white",
 };
 
+const inputStyle = {
+  width: "100%",
+  padding: 14,
+  borderRadius: 12,
+  border: "2px solid #fed7aa",
+  fontSize: 15,
+  background: "white",
+};
+
 const primaryBtn = {
   background: "linear-gradient(135deg,#f59e0b,#f97316)",
   color: "white",
@@ -791,6 +970,36 @@ const primaryBtn = {
   borderRadius: 12,
   fontWeight: "bold",
   cursor: "pointer",
+};
+
+const dangerBtn = {
+  background: "linear-gradient(135deg,#ef4444,#dc2626)",
+  color: "white",
+  border: "none",
+  padding: "14px 20px",
+  borderRadius: 12,
+  fontWeight: "bold",
+  cursor: "pointer",
+};
+
+const darkBtn = {
+  background: "#111827",
+  color: "#fff",
+  border: "none",
+  padding: "12px 16px",
+  borderRadius: 12,
+  cursor: "pointer",
+  fontWeight: "bold",
+};
+
+const greyBtn = {
+  background: "#e5e7eb",
+  color: "#111827",
+  border: "none",
+  padding: "12px 16px",
+  borderRadius: 12,
+  cursor: "pointer",
+  fontWeight: "bold",
 };
 
 const answerBtn = {
