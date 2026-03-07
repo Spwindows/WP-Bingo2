@@ -6,1085 +6,731 @@ const supabase = createClient(
   "sb_publishable_AhduFGwHCFi3vkVt3ostxw_N_-41Oxv"
 );
 
-const MEMBERSHIP_FEE = 1;
-const JACKPOT_FEE = 4;
-const WEEKLY_TOTAL = MEMBERSHIP_FEE + JACKPOT_FEE;
 const CURRENCY = "£";
-const ADMIN_PIN = "1234";
-const MAX_PLAYERS = 50;
-
-function randomDraw() {
-  const nums = [];
-  while (nums.length < 6) {
-    const n = Math.floor(Math.random() * 49) + 1;
-    if (!nums.includes(n)) nums.push(n);
-  }
-  return nums.sort((a, b) => a - b);
-}
-
-function ballColor(num) {
-  const colors = [
-    "#2563eb",
-    "#dc2626",
-    "#16a34a",
-    "#9333ea",
-    "#ea580c",
-    "#0891b2",
-    "#db2777",
-  ];
-  return colors[num % colors.length];
-}
+const DEMO_USERS = [
+  "22222222-2222-2222-2222-222222222222", // Sean
+  "33333333-3333-3333-3333-333333333333", // Wayde
+  "44444444-4444-4444-4444-444444444444", // Sarah
+];
 
 function formatMoney(value) {
   return `${CURRENCY}${Number(value || 0).toFixed(2)}`;
 }
 
-function isActive(player) {
-  return player.left_after_week === null || player.left_after_week === undefined;
+function flattenCard(cardNumbers) {
+  if (!Array.isArray(cardNumbers)) return [];
+  return cardNumbers.flat();
 }
 
-function getWeeksPaid(player, currentWeek, weekDrawn) {
-  if (player.left_after_week !== null && player.left_after_week !== undefined) {
-    return player.left_after_week;
-  }
-  return weekDrawn ? currentWeek : currentWeek - 1;
+function getUnlockableNumbers(cardNumbers) {
+  return flattenCard(cardNumbers).filter((n) => n !== "FREE");
 }
 
-function groupDrawsByWeek(drawn) {
-  const grouped = {};
-  for (const item of drawn) {
-    const wk = item.week || 1;
-    if (!grouped[wk]) grouped[wk] = [];
-    grouped[wk].push(item);
+function pickRandomLockedNumbers(cardNumbers, unlockedNumbers, count) {
+  const unlockedSet = new Set((unlockedNumbers || []).map(String));
+  const available = getUnlockableNumbers(cardNumbers).filter(
+    (n) => !unlockedSet.has(String(n))
+  );
+
+  const shuffled = [...available].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
+}
+
+function isUnlocked(value, unlockedNumbers) {
+  if (value === "FREE") return true;
+  return (unlockedNumbers || []).map(String).includes(String(value));
+}
+
+function getCompletedLines(cardNumbers, unlockedNumbers) {
+  if (!Array.isArray(cardNumbers) || cardNumbers.length !== 5) return [];
+
+  const lines = [];
+
+  for (let r = 0; r < 5; r++) {
+    const row = cardNumbers[r];
+    if (row.every((v) => isUnlocked(v, unlockedNumbers))) {
+      lines.push({ type: "row", index: r });
+    }
   }
-  return Object.entries(grouped)
-    .map(([week, nums]) => ({
-      week: Number(week),
-      nums: nums.sort((a, b) => a.value - b.value),
-    }))
-    .sort((a, b) => a.week - b.week);
+
+  for (let c = 0; c < 5; c++) {
+    const col = [0, 1, 2, 3, 4].map((r) => cardNumbers[r][c]);
+    if (col.every((v) => isUnlocked(v, unlockedNumbers))) {
+      lines.push({ type: "col", index: c });
+    }
+  }
+
+  const diag1 = [0, 1, 2, 3, 4].map((i) => cardNumbers[i][i]);
+  if (diag1.every((v) => isUnlocked(v, unlockedNumbers))) {
+    lines.push({ type: "diag", index: 1 });
+  }
+
+  const diag2 = [0, 1, 2, 3, 4].map((i) => cardNumbers[i][4 - i]);
+  if (diag2.every((v) => isUnlocked(v, unlockedNumbers))) {
+    lines.push({ type: "diag", index: 2 });
+  }
+
+  return lines;
+}
+
+function cellIsHighlighted(cardNumbers, unlockedNumbers, rowIndex, colIndex) {
+  const lines = getCompletedLines(cardNumbers, unlockedNumbers);
+  return lines.some((line) => {
+    if (line.type === "row") return line.index === rowIndex;
+    if (line.type === "col") return line.index === colIndex;
+    if (line.type === "diag" && line.index === 1) return rowIndex === colIndex;
+    if (line.type === "diag" && line.index === 2) return rowIndex + colIndex === 4;
+    return false;
+  });
 }
 
 export default function App() {
-  const [players, setPlayers] = useState([]);
-  const [drawn, setDrawn] = useState([]);
-  const [club, setClub] = useState({
-    id: null,
-    week: 1,
-    week_drawn: false,
-    carryover: 0,
-    winner_found: false,
-    winner_names: [],
-  });
+  const [profiles, setProfiles] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState(DEMO_USERS[0]);
 
-  const [adminUnlocked, setAdminUnlocked] = useState(false);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [currentDraw, setCurrentDraw] = useState([]);
-  const [lastDrawIds, setLastDrawIds] = useState([]);
+  const [membership, setMembership] = useState(null);
+  const [round, setRound] = useState(null);
+  const [card, setCard] = useState(null);
+  const [challenge, setChallenge] = useState(null);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [prizes, setPrizes] = useState([]);
+  const [winners, setWinners] = useState([]);
+  const [attempt, setAttempt] = useState(null);
 
-  const [adminName, setAdminName] = useState("");
-  const [adminNums, setAdminNums] = useState("");
+  const [selectedAnswer, setSelectedAnswer] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState("");
 
-  const [playerLookup, setPlayerLookup] = useState("");
-  const [selectedPlayerName, setSelectedPlayerName] = useState("");
+  const currentProfile = useMemo(
+    () => profiles.find((p) => p.id === selectedUserId) || null,
+    [profiles, selectedUserId]
+  );
 
-  const roundStarted = drawn.length > 0;
-  const activeCount = players.filter(isActive).length;
-  const drawGroups = useMemo(() => groupDrawsByWeek(drawn), [drawn]);
+  const activeMembership = membership?.status === "active";
+  const unlockedNumbers = card?.unlocked_numbers || [];
+  const completedLines = card ? getCompletedLines(card.card_numbers, unlockedNumbers) : [];
+  const hasBingo = completedLines.length > 0;
 
   useEffect(() => {
-    loadAll();
-
-    const playersChannel = supabase
-      .channel("players-live")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "players" },
-        () => loadPlayers()
-      )
-      .subscribe();
-
-    const drawsChannel = supabase
-      .channel("draws-live")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "draws" },
-        () => loadDraws()
-      )
-      .subscribe();
-
-    const clubChannel = supabase
-      .channel("club-live")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "club_state" },
-        () => loadClub()
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(playersChannel);
-      supabase.removeChannel(drawsChannel);
-      supabase.removeChannel(clubChannel);
-    };
+    loadBootData();
   }, []);
 
-  const selectedPlayer = useMemo(() => {
-    if (!selectedPlayerName.trim()) return null;
-    return (
-      players.find(
-        (p) => p.name.toLowerCase() === selectedPlayerName.trim().toLowerCase()
-      ) || null
-    );
-  }, [players, selectedPlayerName]);
+  useEffect(() => {
+    if (selectedUserId) {
+      loadUserData(selectedUserId);
+    }
+  }, [selectedUserId, round?.id]);
 
-  const paidWeeks = useMemo(() => {
-    return Math.max(0, getWeeksPaid({ left_after_week: null }, club.week, club.week_drawn));
-  }, [club.week, club.week_drawn]);
+  useEffect(() => {
+    if (round?.id) {
+      loadRoundData(round.id);
+    }
+  }, [round?.id]);
 
-  const totalMembershipFees = useMemo(() => {
-    return players.reduce(
-      (sum, p) => sum + getWeeksPaid(p, club.week, club.week_drawn) * MEMBERSHIP_FEE,
-      0
-    );
-  }, [players, club.week, club.week_drawn]);
-
-  const currentJackpot = useMemo(() => {
-    const paid = players.reduce(
-      (sum, p) => sum + getWeeksPaid(p, club.week, club.week_drawn) * JACKPOT_FEE,
-      0
-    );
-    return paid + Number(club.carryover || 0);
-  }, [players, club.week, club.week_drawn, club.carryover]);
-
-  const winnerPrizeEach =
-    club.winner_names.length > 0
-      ? currentJackpot / club.winner_names.length
-      : currentJackpot;
-
-  async function loadAll() {
-    await Promise.all([loadPlayers(), loadDraws(), loadClub()]);
+  async function loadBootData() {
+    await Promise.all([loadProfiles(), loadActiveRound()]);
   }
 
-  async function loadPlayers() {
-    const { data, error } = await supabase
-      .from("players")
+  async function loadProfiles() {
+    const { data } = await supabase
+      .from("profiles")
       .select("*")
-      .order("name", { ascending: true });
+      .order("display_name", { ascending: true });
 
-    if (!error && data) setPlayers(data);
+    if (data) {
+      const filtered = data.filter((p) => DEMO_USERS.includes(p.id) || p.is_admin);
+      setProfiles(filtered);
+    }
   }
 
-  async function loadDraws() {
-    const { data, error } = await supabase
-      .from("draws")
+  async function loadActiveRound() {
+    const { data } = await supabase
+      .from("weekly_rounds")
       .select("*")
-      .order("week", { ascending: true })
-      .order("created_at", { ascending: true });
-
-    if (!error && data) setDrawn(data);
-  }
-
-  async function loadClub() {
-    const { data, error } = await supabase
-      .from("club_state")
-      .select("*")
+      .eq("status", "active")
+      .order("week_number", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    if (!error && data) {
-      setClub({
-        ...data,
-        week: Number(data.week || 1),
-        week_drawn: !!data.week_drawn,
-        winner_names: data.winner_names || [],
-      });
-    }
+    if (data) setRound(data);
   }
 
-  async function updateClub(patch) {
-    if (!club.id) return;
-    await supabase.from("club_state").update(patch).eq("id", club.id);
+  async function loadUserData(userId) {
+    if (!userId || !round?.id) return;
+
+    const [membershipRes, cardRes, attemptRes] = await Promise.all([
+      supabase.from("memberships").select("*").eq("user_id", userId).maybeSingle(),
+      supabase
+        .from("bingo_cards")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("round_id", round.id)
+        .maybeSingle(),
+      challenge?.id
+        ? supabase
+            .from("challenge_attempts")
+            .select("*")
+            .eq("user_id", userId)
+            .eq("challenge_id", challenge.id)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+
+    if (membershipRes.data) setMembership(membershipRes.data);
+    else setMembership(null);
+
+    if (cardRes.data) setCard(cardRes.data);
+    else setCard(null);
+
+    if (attemptRes.data) setAttempt(attemptRes.data);
+    else setAttempt(null);
   }
 
-  function unlockAdmin() {
-    const pin = window.prompt("Enter admin PIN");
-    if (pin === ADMIN_PIN) {
-      setAdminUnlocked(true);
-      alert("Admin unlocked");
+  async function loadRoundData(roundId) {
+    if (!roundId) return;
+
+    const [challengeRes, leaderboardRes, prizesRes, winnersRes] = await Promise.all([
+      supabase
+        .from("daily_challenges")
+        .select("*")
+        .eq("round_id", roundId)
+        .order("challenge_date", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("leaderboard_entries")
+        .select("*, profiles(display_name)")
+        .eq("round_id", roundId)
+        .order("points", { ascending: false }),
+      supabase
+        .from("prizes")
+        .select("*")
+        .eq("round_id", roundId)
+        .order("position", { ascending: true }),
+      supabase
+        .from("winners")
+        .select("*, profiles(display_name)")
+        .eq("round_id", roundId)
+        .order("created_at", { ascending: false }),
+    ]);
+
+    if (challengeRes.data) setChallenge(challengeRes.data);
+    else setChallenge(null);
+
+    if (leaderboardRes.data) {
+      const ranked = leaderboardRes.data.map((entry, index) => ({
+        ...entry,
+        display_rank: index + 1,
+      }));
+      setLeaderboard(ranked);
     } else {
-      alert("Wrong PIN");
+      setLeaderboard([]);
+    }
+
+    if (prizesRes.data) setPrizes(prizesRes.data);
+    else setPrizes([]);
+
+    if (winnersRes.data) setWinners(winnersRes.data);
+    else setWinners([]);
+
+    if (selectedUserId && challengeRes.data) {
+      const attemptRes = await supabase
+        .from("challenge_attempts")
+        .select("*")
+        .eq("user_id", selectedUserId)
+        .eq("challenge_id", challengeRes.data.id)
+        .maybeSingle();
+
+      setAttempt(attemptRes.data || null);
     }
   }
 
-  function lockAdmin() {
-    setAdminUnlocked(false);
+  async function refreshAll() {
+    await loadActiveRound();
+    if (round?.id) {
+      await loadRoundData(round.id);
+    }
+    if (selectedUserId) {
+      await loadUserData(selectedUserId);
+    }
   }
 
-  async function addPlayer(e) {
-    e.preventDefault();
+  async function submitChallenge() {
+    if (!currentProfile || !activeMembership || !card || !challenge) return;
 
-    if (!adminUnlocked) {
-      alert("Unlock admin first");
+    if (attempt?.completed) {
+      setMessage("You already completed today's challenge.");
       return;
     }
 
-    if (players.length >= MAX_PLAYERS) {
-      alert(`Club is full (${MAX_PLAYERS} members max)`);
+    if (!selectedAnswer) {
+      setMessage("Please choose an answer.");
       return;
     }
 
-    if (roundStarted) {
-      alert("No new players can be added after the first weekly draw");
-      return;
-    }
+    setSubmitting(true);
+    setMessage("");
 
-    const numbers = adminNums
-      .split(",")
-      .map((n) => parseInt(n.trim(), 10))
-      .filter((n) => !Number.isNaN(n));
+    const payload = challenge.payload || {};
+    const correctAnswer = payload.correct_answer;
+    const isCorrect = selectedAnswer === correctAnswer;
+    const rewardNumbers = isCorrect ? Number(challenge.reward_numbers || 1) : 0;
+    const rewardPoints = isCorrect ? Number(challenge.reward_points || 5) : 0;
 
-    if (!adminName.trim()) {
-      alert("Enter name");
-      return;
-    }
+    const newlyUnlocked = isCorrect
+      ? pickRandomLockedNumbers(card.card_numbers, card.unlocked_numbers || [], rewardNumbers)
+      : [];
 
-    if (numbers.length !== 6) {
-      alert("Enter exactly 6 numbers");
-      return;
-    }
+    const updatedUnlocked = [
+      ...new Set([...(card.unlocked_numbers || []), ...newlyUnlocked].map(String)),
+    ].map((v) => (Number.isNaN(Number(v)) ? v : Number(v)));
 
-    const unique = [...new Set(numbers)].sort((a, b) => a - b);
+    const linesAfter = getCompletedLines(card.card_numbers, updatedUnlocked);
+    const bingoCompleted = linesAfter.length > 0;
 
-    if (unique.length !== 6) {
-      alert("Numbers must be 6 different numbers");
-      return;
-    }
-
-    if (unique.some((n) => n < 1 || n > 49)) {
-      alert("Numbers must be between 1 and 49");
-      return;
-    }
-
-    const duplicateName = players.some(
-      (p) => p.name.toLowerCase() === adminName.trim().toLowerCase()
-    );
-
-    if (duplicateName) {
-      alert("That player name already exists");
-      return;
-    }
-
-    const { error } = await supabase.from("players").insert({
-      id: crypto.randomUUID(),
-      name: adminName.trim(),
-      numbers: unique,
-      left_after_week: null,
+    const { error: attemptError } = await supabase.from("challenge_attempts").upsert({
+      user_id: selectedUserId,
+      round_id: round.id,
+      challenge_id: challenge.id,
+      score: isCorrect ? 100 : 0,
+      correct: isCorrect,
+      completed: true,
+      points_awarded: rewardPoints,
+      numbers_awarded: newlyUnlocked.length,
     });
 
-    if (error) {
-      alert("Could not add player");
+    if (attemptError) {
+      setSubmitting(false);
+      setMessage("Could not save attempt.");
       return;
     }
 
-    setAdminName("");
-    setAdminNums("");
-  }
+    const existingLeaderboard = leaderboard.find((x) => x.user_id === selectedUserId);
+    const currentPoints = existingLeaderboard?.points || 0;
 
-  function checkMyNumbers(e) {
-    e.preventDefault();
-
-    if (!playerLookup.trim()) {
-      alert("Enter your name");
-      return;
-    }
-
-    const found = players.find(
-      (p) => p.name.toLowerCase() === playerLookup.trim().toLowerCase()
-    );
-
-    if (!found) {
-      alert("No player found with that name");
-      return;
-    }
-
-    setSelectedPlayerName(found.name);
-  }
-
-  function clearPlayerLookup() {
-    setPlayerLookup("");
-    setSelectedPlayerName("");
-  }
-
-  async function drawNumbers() {
-    if (!adminUnlocked) {
-      alert("Unlock admin first");
-      return;
-    }
-
-    if (club.winner_found) {
-      alert("Winner already found. Start a new round.");
-      return;
-    }
-
-    if (club.week_drawn) {
-      alert(`Week ${club.week} has already been drawn. Start next week first.`);
-      return;
-    }
-
-    if (isDrawing) return;
-
-    const activePlayers = players.filter(isActive);
-
-    if (activePlayers.length === 0) {
-      alert("Add players first");
-      return;
-    }
-
-    const drawWeek = club.week;
-
-    setIsDrawing(true);
-    setCurrentDraw([]);
-    setLastDrawIds([]);
-
-    const numbers = randomDraw();
-    const newEntries = numbers.map((n) => ({
-      id: crypto.randomUUID(),
-      value: n,
-      week: drawWeek,
-    }));
-
-    newEntries.forEach((entry, index) => {
-      setTimeout(() => {
-        setCurrentDraw((prev) => [...prev, entry]);
-      }, index * 450);
+    const { error: leaderboardError } = await supabase.from("leaderboard_entries").upsert({
+      user_id: selectedUserId,
+      round_id: round.id,
+      points: currentPoints + rewardPoints,
+      updated_at: new Date().toISOString(),
     });
 
-    setTimeout(async () => {
-      const { error } = await supabase.from("draws").insert(newEntries);
+    if (leaderboardError) {
+      setSubmitting(false);
+      setMessage("Could not update leaderboard.");
+      return;
+    }
 
-      if (error) {
-        setIsDrawing(false);
-        alert("Draw failed");
-        return;
-      }
+    const { error: cardError } = await supabase
+      .from("bingo_cards")
+      .update({
+        unlocked_numbers: updatedUnlocked,
+        completed: bingoCompleted,
+        completed_at: bingoCompleted ? new Date().toISOString() : null,
+      })
+      .eq("id", card.id);
 
-      const updatedDrawn = [...drawn, ...newEntries];
-      setLastDrawIds(newEntries.map((x) => x.id));
+    if (cardError) {
+      setSubmitting(false);
+      setMessage("Could not update bingo card.");
+      return;
+    }
 
-      await updateClub({ week_drawn: true });
-      await finishWeekCheck(updatedDrawn, drawWeek);
+    if (bingoCompleted) {
+      const existingBingoWinner = winners.find((w) => w.win_type === "bingo");
+      if (!existingBingoWinner) {
+        const bingoPrize =
+          prizes.find((p) => p.prize_type === "bingo" && p.position === 1)?.amount || 0;
 
-      setIsDrawing(false);
-      setCurrentDraw([]);
-    }, newEntries.length * 450 + 250);
-  }
-
-  async function finishWeekCheck(updatedDrawn, drawWeek) {
-    const activePlayers = players.filter(isActive);
-
-    const winners = activePlayers.filter((p) => {
-      const hits = p.numbers.filter((n) =>
-        updatedDrawn.some((d) => d.value === n)
-      );
-      return hits.length === 6;
-    });
-
-    if (winners.length > 0) {
-      const winnerList = winners.map((w) => w.name);
-
-      await updateClub({
-        winner_found: true,
-        winner_names: winnerList,
-      });
-
-      const jackpotAtWin =
-        players.reduce(
-          (sum, p) => sum + getWeeksPaid(p, drawWeek, true) * JACKPOT_FEE,
-          0
-        ) + Number(club.carryover || 0);
-
-      if (winnerList.length === 1) {
-        alert(`Winner: ${winnerList[0]} — prize ${formatMoney(jackpotAtWin)}`);
-      } else {
-        alert(
-          `Winners: ${winnerList.join(", ")}\nEach wins ${formatMoney(
-            jackpotAtWin / winnerList.length
-          )}`
-        );
+        await supabase.from("winners").insert({
+          round_id: round.id,
+          user_id: selectedUserId,
+          win_type: "bingo",
+          prize_amount: bingoPrize,
+          notes: "First line completed",
+        });
       }
     }
-  }
 
-  async function startNextWeek() {
-    if (!adminUnlocked) {
-      alert("Unlock admin first");
-      return;
-    }
-
-    if (isDrawing) return;
-
-    if (!club.week_drawn && roundStarted) {
-      alert(`Week ${club.week} has not been drawn yet.`);
-      return;
-    }
-
-    if (club.winner_found) {
-      alert("Winner already found. Start a new round.");
-      return;
-    }
-
-    const activePlayers = players.filter(isActive);
-    if (activePlayers.length === 0) {
-      alert("No active players.");
-      return;
-    }
-
-    await updateClub({
-      week: club.week + 1,
-      week_drawn: false,
-    });
-  }
-
-  async function withdrawPlayer(id) {
-    if (!adminUnlocked) {
-      alert("Unlock admin first");
-      return;
-    }
-
-    if (isDrawing) return;
-
-    const player = players.find((p) => p.id === id);
-    if (!player) return;
-
-    if (!roundStarted) {
-      await supabase.from("players").delete().eq("id", id);
-      return;
-    }
-
-    if (!isActive(player)) return;
-
-    const weeksToCharge = club.week_drawn ? club.week : club.week - 1;
-    const ok = window.confirm(
-      `${player.name} will stop contributing after week ${Math.max(0, weeksToCharge)}. Continue?`
+    setSelectedAnswer("");
+    setSubmitting(false);
+    setMessage(
+      isCorrect
+        ? `Correct! You earned ${rewardPoints} points and unlocked ${newlyUnlocked.length} number(s).`
+        : "Incorrect answer. Try again tomorrow."
     );
-    if (!ok) return;
 
-    await supabase
-      .from("players")
-      .update({ left_after_week: Math.max(0, weeksToCharge) })
-      .eq("id", id);
-
-    const stillActive = players.filter((p) => p.id !== id && isActive(p));
-
-    if (stillActive.length === 0) {
-      await updateClub({
-        carryover: currentJackpot,
-        winner_found: false,
-        winner_names: [],
-      });
-    }
-  }
-
-  async function newRound() {
-    if (!adminUnlocked) {
-      alert("Unlock admin first");
-      return;
-    }
-
-    if (isDrawing) return;
-
-    const ok = window.confirm("Start a new round?");
-    if (!ok) return;
-
-    await supabase
-      .from("draws")
-      .delete()
-      .neq("id", "00000000-0000-0000-0000-000000000000");
-
-    await supabase
-      .from("players")
-      .update({ left_after_week: null })
-      .neq("id", "00000000-0000-0000-0000-000000000000");
-
-    await updateClub({
-      week: 1,
-      week_drawn: false,
-      winner_found: false,
-      winner_names: [],
-    });
-
-    setCurrentDraw([]);
-    setLastDrawIds([]);
-  }
-
-  async function resetEverything() {
-    if (!adminUnlocked) {
-      alert("Unlock admin first");
-      return;
-    }
-
-    if (isDrawing) return;
-
-    const ok = window.confirm("Reset everything?");
-    if (!ok) return;
-
-    await supabase
-      .from("players")
-      .delete()
-      .neq("id", "00000000-0000-0000-0000-000000000000");
-
-    await supabase
-      .from("draws")
-      .delete()
-      .neq("id", "00000000-0000-0000-0000-000000000000");
-
-    await updateClub({
-      week: 1,
-      week_drawn: false,
-      carryover: 0,
-      winner_found: false,
-      winner_names: [],
-    });
-
-    setPlayerLookup("");
-    setSelectedPlayerName("");
-    setAdminName("");
-    setAdminNums("");
-    setCurrentDraw([]);
-    setLastDrawIds([]);
+    await refreshAll();
   }
 
   return (
     <div
       style={{
+        minHeight: "100vh",
         padding: 16,
         fontFamily: "Arial, sans-serif",
-        background:
-          "linear-gradient(180deg, #eff6ff 0%, #fdf2f8 50%, #f0fdf4 100%)",
-        minHeight: "100vh",
+        background: "linear-gradient(180deg,#eff6ff 0%,#fdf2f8 50%,#f0fdf4 100%)",
       }}
     >
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
         <div
           style={{
-            ...card,
-            background: "linear-gradient(135deg, #1d4ed8, #7c3aed, #db2777)",
+            ...cardStyle,
+            background: "linear-gradient(135deg,#1d4ed8,#7c3aed,#db2777)",
             color: "white",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 16,
-              flexWrap: "wrap",
-            }}
-          >
+          <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
             <img
               src="/logo.png"
               alt="Logo"
               style={{
-                height: 110,
-                width: 110,
-                borderRadius: 20,
+                width: 100,
+                height: 100,
                 objectFit: "cover",
+                borderRadius: 20,
                 background: "white",
                 padding: 8,
-                boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
               }}
             />
             <div>
-              <h1 style={{ margin: 0, fontSize: 36 }}>Weekly Bingo Club</h1>
+              <h1 style={{ margin: 0, fontSize: 34 }}>Skill Bingo Club</h1>
               <div style={{ marginTop: 6, opacity: 0.95 }}>
-                {formatMoney(WEEKLY_TOTAL)} weekly • {formatMoney(MEMBERSHIP_FEE)} membership •{" "}
-                {formatMoney(JACKPOT_FEE)} jackpot
+                {CURRENCY}4.99 membership • Weekly challenge • Leaderboard • Jackpot prizes
               </div>
               <div style={{ marginTop: 6, opacity: 0.95 }}>
-                Private club • Max {MAX_PLAYERS} members
+                Unlock numbers through skill, not luck
               </div>
             </div>
           </div>
-
-          <div
-            style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}
-          >
-            {!adminUnlocked ? (
-              <button style={darkBtn} onClick={unlockAdmin}>
-                Unlock Admin
-              </button>
-            ) : (
-              <button style={greyBtn} onClick={lockAdmin}>
-                Lock Admin
-              </button>
-            )}
-            <button
-              style={yellowBtn}
-              onClick={drawNumbers}
-              disabled={isDrawing || activeCount === 0 || club.week_drawn}
-            >
-              {isDrawing ? "Drawing..." : `Draw Week ${club.week}`}
-            </button>
-            <button
-              style={greyBtn}
-              onClick={startNextWeek}
-              disabled={isDrawing || !club.week_drawn || club.winner_found}
-            >
-              Start Week {club.week + 1}
-            </button>
-            <button style={greyBtn} onClick={newRound} disabled={isDrawing}>
-              New Round
-            </button>
-            <button style={dangerBtn} onClick={resetEverything} disabled={isDrawing}>
-              Reset All
-            </button>
-          </div>
         </div>
 
-        <div style={statsGrid}>
+        <div style={gridStats}>
           <StatCard
             title="Current Week"
-            value={club.week}
+            value={round ? round.week_number : "-"}
             bg="linear-gradient(135deg,#f59e0b,#f97316)"
           />
           <StatCard
-            title="Week Status"
-            value={club.week_drawn ? "Drawn" : "Open"}
+            title="Weekly Prize"
+            value={round ? formatMoney(round.weekly_prize) : "-"}
             bg="linear-gradient(135deg,#10b981,#059669)"
           />
           <StatCard
-            title="Members"
-            value={`${players.length}/${MAX_PLAYERS}`}
-            bg="linear-gradient(135deg,#0ea5e9,#0284c7)"
-          />
-          <StatCard
-            title="Current Jackpot"
-            value={formatMoney(currentJackpot)}
+            title="Jackpot Prize"
+            value={round ? formatMoney(round.jackpot_prize) : "-"}
             bg="linear-gradient(135deg,#3b82f6,#2563eb)"
           />
           <StatCard
-            title={club.winner_names.length > 1 ? "Winner Prize Each" : "Winner Prize"}
-            value={formatMoney(
-              club.winner_names.length > 1 ? winnerPrizeEach : currentJackpot
-            )}
+            title="My Membership"
+            value={membership ? membership.plan.toUpperCase() : "NONE"}
             bg="linear-gradient(135deg,#8b5cf6,#7c3aed)"
           />
         </div>
 
-        <div
-          style={{
-            padding: 16,
-            borderRadius: 14,
-            background: "#fff7ed",
-            marginBottom: 16,
-            border: "2px solid #fdba74",
-          }}
-        >
-          <h3 style={{ marginTop: 0 }}>One Draw Per Week Rule</h3>
-          <p style={{ marginBottom: 0, lineHeight: 1.7 }}>
-            Each week allows <strong>one draw only</strong>. After the weekly numbers are drawn,
-            the draw button locks. The admin must press <strong>Start Week {club.week + 1}</strong>
-            before another draw can happen. Each active player is charged once per drawn week.
-          </p>
-        </div>
-
-        <div style={{ ...card, background: "#eef2ff" }}>
-          <h2 style={{ marginTop: 0, color: "#4338ca" }}>Check My Numbers</h2>
-          <p style={{ marginTop: 0, color: "#475569", lineHeight: 1.6 }}>
-            Type your name to view only your ticket and progress.
-          </p>
-
-          <form onSubmit={checkMyNumbers}>
-            <input
-              placeholder="Enter your name"
-              value={playerLookup}
-              onChange={(e) => setPlayerLookup(e.target.value)}
-              style={input}
-            />
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button type="submit" style={bigYellowBtn}>
-                View My Ticket
-              </button>
-              <button type="button" style={greyBtn} onClick={clearPlayerLookup}>
-                Clear
-              </button>
-            </div>
-          </form>
-
-          {selectedPlayer && (
-            <div style={{ marginTop: 16 }}>
-              <PlayerCard
-                player={selectedPlayer}
-                drawn={drawn}
-                currentWeek={club.week}
-                weekDrawn={club.week_drawn}
-                jackpotFee={JACKPOT_FEE}
-                adminUnlocked={false}
-                isDrawing={false}
-                onWithdraw={() => {}}
-              />
-            </div>
-          )}
-        </div>
-
-        <div style={{ ...card, background: "#ffffffee" }}>
-          <div
-            style={{
-              marginBottom: 20,
-              padding: 20,
-              borderRadius: 18,
-              background: "linear-gradient(135deg,#111827,#1f2937)",
-              color: "white",
-              textAlign: "center",
-            }}
+        <div style={{ ...cardStyle, background: "#eef2ff" }}>
+          <h2 style={{ marginTop: 0, color: "#4338ca" }}>Choose Player</h2>
+          <select
+            value={selectedUserId}
+            onChange={(e) => setSelectedUserId(e.target.value)}
+            style={selectStyle}
           >
-            <div
-              style={{
-                fontSize: 18,
-                marginBottom: 10,
-                opacity: 0.85,
-                fontWeight: "bold",
-              }}
-            >
-              Live Draw
-            </div>
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                flexWrap: "wrap",
-                gap: 14,
-                minHeight: 80,
-                alignItems: "center",
-              }}
-            >
-              {currentDraw.length === 0 && !isDrawing && (
-                <div style={{ opacity: 0.6 }}>
-                  {club.week_drawn
-                    ? `Week ${club.week} already drawn`
-                    : `Press Draw Week ${club.week} to begin`}
-                </div>
-              )}
-
-              {currentDraw.map((entry) => (
-                <div
-                  key={entry.id}
-                  style={{
-                    width: 72,
-                    height: 72,
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 28,
-                    fontWeight: "bold",
-                    background: ballColor(entry.value),
-                    color: "#fff",
-                    boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
-                    animation: "popIn 0.35s ease",
-                  }}
-                >
-                  {entry.value}
-                </div>
+            {profiles
+              .filter((p) => DEMO_USERS.includes(p.id))
+              .map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.display_name}
+                </option>
               ))}
+          </select>
+
+          <div style={{ marginTop: 12, lineHeight: 1.7 }}>
+            <div>
+              <strong>Player:</strong> {currentProfile?.display_name || "-"}
+            </div>
+            <div>
+              <strong>Membership:</strong>{" "}
+              {activeMembership
+                ? `${membership.plan.toUpperCase()} (${membership.status})`
+                : "Inactive"}
+            </div>
+            <div>
+              <strong>Round:</strong> {round?.title || "-"}
             </div>
           </div>
-
-          <h2 style={{ marginTop: 0, color: "#1e3a8a" }}>Numbers Drawn By Week</h2>
-
-          {drawGroups.length === 0 ? (
-            <p style={{ color: "#666" }}>No numbers drawn yet</p>
-          ) : (
-            <div style={{ display: "grid", gap: 14 }}>
-              {drawGroups.map((group) => (
-                <div
-                  key={group.week}
-                  style={{
-                    border: "2px solid #e5e7eb",
-                    borderRadius: 14,
-                    padding: 12,
-                    background: "#fff",
-                  }}
-                >
-                  <div style={{ fontWeight: "bold", marginBottom: 10 }}>
-                    Week {group.week}
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                    {group.nums.map((entry) => (
-                      <div
-                        key={entry.id}
-                        style={{
-                          ...ball,
-                          background: ballColor(entry.value),
-                          color: "#fff",
-                          boxShadow: lastDrawIds.includes(entry.id)
-                            ? "0 0 0 4px rgba(250,204,21,0.45), 0 8px 18px rgba(0,0,0,0.18)"
-                            : "0 6px 14px rgba(0,0,0,0.18)",
-                        }}
-                      >
-                        {entry.value}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <p style={{ marginTop: 16 }}>
-            <strong>Round status:</strong>{" "}
-            {club.winner_found
-              ? "Winner found"
-              : club.week_drawn
-              ? `Week ${club.week} complete — next week locked until admin starts it`
-              : `Week ${club.week} open for its one weekly draw`}
-          </p>
-
-          {club.winner_found && (
-            <div
-              style={{
-                marginTop: 12,
-                padding: 14,
-                borderRadius: 14,
-                background: "linear-gradient(135deg,#22c55e,#16a34a)",
-                color: "white",
-                fontWeight: "bold",
-              }}
-            >
-              {club.winner_names.length === 1
-                ? `Winner: ${club.winner_names[0]} — winner prize ${formatMoney(currentJackpot)}`
-                : `Winners: ${club.winner_names.join(", ")} — each wins ${formatMoney(
-                    winnerPrizeEach
-                  )}`}
-            </div>
-          )}
         </div>
 
         <div style={twoCol}>
-          <div style={{ ...card, background: "#fff7ed" }}>
-            <h2 style={{ marginTop: 0, color: "#c2410c" }}>Add Player (Admin Only)</h2>
+          <div style={{ ...cardStyle, background: "#fff" }}>
+            <h2 style={{ marginTop: 0, color: "#1e3a8a" }}>My Bingo Card</h2>
 
-            <div
-              style={{
-                marginBottom: 12,
-                padding: 12,
-                borderRadius: 12,
-                background: "#fffbeb",
-                border: "1px solid #fcd34d",
-                fontSize: 14,
-                lineHeight: 1.6,
-              }}
-            >
-              <strong>Private club only.</strong> Only the club admin can add
-              players before the first weekly draw. Membership is capped at {MAX_PLAYERS} players.
-            </div>
+            {card ? (
+              <>
+                <div style={bingoHeaderRow}>
+                  {["B", "I", "N", "G", "O"].map((letter) => (
+                    <div key={letter} style={bingoHeaderCell}>
+                      {letter}
+                    </div>
+                  ))}
+                </div>
 
-            {players.length >= MAX_PLAYERS && (
-              <p style={{ color: "#b91c1c", fontWeight: "bold" }}>
-                Club is full ({MAX_PLAYERS} members)
-              </p>
-            )}
+                <div style={bingoGrid}>
+                  {card.card_numbers.map((row, rowIndex) =>
+                    row.map((value, colIndex) => {
+                      const unlocked = isUnlocked(value, card.unlocked_numbers || []);
+                      const highlighted = cellIsHighlighted(
+                        card.card_numbers,
+                        card.unlocked_numbers || [],
+                        rowIndex,
+                        colIndex
+                      );
 
-            {!adminUnlocked ? (
-              <p style={{ color: "#475569" }}>Unlock admin to add players.</p>
-            ) : roundStarted ? (
-              <p style={{ color: "#b91c1c", fontWeight: "bold" }}>
-                Entries closed until next round
-              </p>
+                      return (
+                        <div
+                          key={`${rowIndex}-${colIndex}`}
+                          style={{
+                            ...bingoCell,
+                            background:
+                              value === "FREE"
+                                ? "linear-gradient(135deg,#fde68a,#f59e0b)"
+                                : highlighted
+                                ? "linear-gradient(135deg,#22c55e,#16a34a)"
+                                : unlocked
+                                ? "linear-gradient(135deg,#3b82f6,#2563eb)"
+                                : "#f3f4f6",
+                            color: value === "FREE" || unlocked || highlighted ? "white" : "#111827",
+                            border: highlighted
+                              ? "3px solid #14532d"
+                              : unlocked
+                              ? "2px solid #1d4ed8"
+                              : "2px solid #e5e7eb",
+                          }}
+                        >
+                          {value}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div style={{ marginTop: 14, lineHeight: 1.7 }}>
+                  <div>
+                    <strong>Unlocked numbers:</strong> {(card.unlocked_numbers || []).length}
+                  </div>
+                  <div>
+                    <strong>Completed lines:</strong> {completedLines.length}
+                  </div>
+                  <div>
+                    <strong>Status:</strong> {hasBingo ? "BINGO achieved" : "Still in progress"}
+                  </div>
+                </div>
+              </>
             ) : (
-              <form onSubmit={addPlayer}>
-                <input
-                  placeholder="Name"
-                  value={adminName}
-                  onChange={(e) => setAdminName(e.target.value)}
-                  style={input}
-                />
-                <input
-                  placeholder="6 numbers e.g. 3,7,12,18,24,45"
-                  value={adminNums}
-                  onChange={(e) => setAdminNums(e.target.value)}
-                  style={input}
-                />
-                <button
-                  type="submit"
-                  style={bigYellowBtn}
-                  disabled={players.length >= MAX_PLAYERS}
-                >
-                  Add Player
-                </button>
-              </form>
+              <p>No bingo card found.</p>
             )}
           </div>
 
-          <div style={{ ...card, background: "#f0fdf4" }}>
-            <h2 style={{ marginTop: 0, color: "#166534" }}>Rules & Membership</h2>
-            <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
-              <li>
-                Weekly contribution is <strong>{formatMoney(WEEKLY_TOTAL)}</strong>
-              </li>
-              <li>
-                <strong>{formatMoney(MEMBERSHIP_FEE)}</strong> is a club membership/admin fee
-              </li>
-              <li>
-                <strong>{formatMoney(JACKPOT_FEE)}</strong> goes into the progressive jackpot pool
-              </li>
-              <li>Only one draw of 6 numbers is allowed per week</li>
-              <li>After a draw, that week locks until admin starts the next week</li>
-              <li>Players pay once per active drawn week</li>
-              <li>Numbers are drawn weekly and saved against that week</li>
-              <li>Players keep the same numbers for the entire round</li>
-              <li>Membership capped at {MAX_PLAYERS} players</li>
-              <li>The winner receives <strong>100% of the jackpot pool</strong></li>
-              <li>If multiple players match all 6 numbers in the same draw, the jackpot is split equally</li>
-              <li>Players may withdraw but previous contributed weeks remain in the jackpot</li>
-              <li>If all players withdraw, the jackpot carries forward to the next round</li>
-            </ul>
+          <div style={{ ...cardStyle, background: "#fff7ed" }}>
+            <h2 style={{ marginTop: 0, color: "#c2410c" }}>Daily Challenge</h2>
+
+            {challenge ? (
+              <>
+                <div style={{ marginBottom: 12, lineHeight: 1.7 }}>
+                  <div>
+                    <strong>Title:</strong> {challenge.title}
+                  </div>
+                  <div>
+                    <strong>Date:</strong> {challenge.challenge_date}
+                  </div>
+                  <div>
+                    <strong>Reward:</strong> {challenge.reward_points} points +{" "}
+                    {challenge.reward_numbers} number(s)
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    background: "white",
+                    borderRadius: 14,
+                    padding: 14,
+                    border: "2px solid #fed7aa",
+                    marginBottom: 14,
+                  }}
+                >
+                  <div style={{ fontWeight: "bold", marginBottom: 10 }}>
+                    {challenge.payload?.question}
+                  </div>
+
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {(challenge.payload?.answers || []).map((answer) => (
+                      <button
+                        key={answer}
+                        type="button"
+                        onClick={() => setSelectedAnswer(answer)}
+                        disabled={attempt?.completed || submitting}
+                        style={{
+                          ...answerBtn,
+                          background:
+                            selectedAnswer === answer
+                              ? "linear-gradient(135deg,#3b82f6,#2563eb)"
+                              : "#fff",
+                          color: selectedAnswer === answer ? "white" : "#111827",
+                        }}
+                      >
+                        {answer}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    onClick={submitChallenge}
+                    disabled={!activeMembership || attempt?.completed || submitting}
+                    style={primaryBtn}
+                  >
+                    {attempt?.completed
+                      ? "Challenge Completed"
+                      : submitting
+                      ? "Submitting..."
+                      : "Submit Answer"}
+                  </button>
+                </div>
+
+                <div style={{ marginTop: 12, lineHeight: 1.7 }}>
+                  <div>
+                    <strong>Today's status:</strong>{" "}
+                    {attempt?.completed
+                      ? attempt.correct
+                        ? "Completed correctly"
+                        : "Completed incorrectly"
+                      : "Not attempted yet"}
+                  </div>
+                  {message && (
+                    <div style={{ marginTop: 8, color: "#7c2d12", fontWeight: "bold" }}>
+                      {message}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p>No daily challenge found.</p>
+            )}
           </div>
         </div>
 
-        <div style={{ ...card, background: "#ffffffee" }}>
-          <h2 style={{ marginTop: 0, color: "#7c2d12" }}>Players</h2>
-          {players.length === 0 ? (
-            <p style={{ color: "#666" }}>No players added yet</p>
-          ) : (
-            <div style={playersGrid}>
-              {players.map((player) => (
-                <PlayerCard
-                  key={player.id}
-                  player={player}
-                  drawn={drawn}
-                  currentWeek={club.week}
-                  weekDrawn={club.week_drawn}
-                  jackpotFee={JACKPOT_FEE}
-                  adminUnlocked={adminUnlocked}
-                  isDrawing={isDrawing}
-                  onWithdraw={() => withdrawPlayer(player.id)}
-                />
-              ))}
+        <div style={twoCol}>
+          <div style={{ ...cardStyle, background: "#ffffffee" }}>
+            <h2 style={{ marginTop: 0, color: "#7c2d12" }}>Leaderboard</h2>
+            {leaderboard.length === 0 ? (
+              <p>No leaderboard entries yet.</p>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {leaderboard.map((entry) => (
+                  <div
+                    key={entry.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: 12,
+                      borderRadius: 12,
+                      border: "2px solid #e5e7eb",
+                      background:
+                        entry.user_id === selectedUserId
+                          ? "linear-gradient(135deg,#eff6ff,#dbeafe)"
+                          : "white",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: "bold" }}>
+                        #{entry.display_rank} {entry.profiles?.display_name || "Player"}
+                      </div>
+                      <div style={{ color: "#64748b", fontSize: 14 }}>
+                        Round {round?.week_number || "-"}
+                      </div>
+                    </div>
+                    <div style={{ fontWeight: "bold", fontSize: 20 }}>{entry.points}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ ...cardStyle, background: "#faf5ff" }}>
+            <h2 style={{ marginTop: 0, color: "#6b21a8" }}>Prizes & Winners</h2>
+
+            <div style={{ marginBottom: 16 }}>
+              <h3 style={{ marginBottom: 10 }}>Prizes</h3>
+              {prizes.length === 0 ? (
+                <p>No prizes set.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {prizes.map((prize) => (
+                    <div
+                      key={prize.id}
+                      style={{
+                        border: "2px solid #e9d5ff",
+                        borderRadius: 12,
+                        padding: 12,
+                        background: "white",
+                      }}
+                    >
+                      <div style={{ fontWeight: "bold" }}>{prize.title}</div>
+                      <div style={{ color: "#6b21a8" }}>
+                        {prize.prize_type.toUpperCase()} • {formatMoney(prize.amount)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
-        <div
-          style={{
-            ...card,
-            background: "#eff6ff",
-            color: "#1e3a8a",
-          }}
-        >
-          <strong>Membership fees collected:</strong> {formatMoney(totalMembershipFees)}
-        </div>
-      </div>
-
-      <style>{`
-        @keyframes popIn {
-          0% {
-            transform: scale(0.1) rotate(-40deg);
-            opacity: 0;
-          }
-          60% {
-            transform: scale(1.25) rotate(10deg);
-            opacity: 1;
-          }
-          100% {
-            transform: scale(1) rotate(0deg);
-          }
-        }
-      `}</style>
-    </div>
-  );
-}
-
-function PlayerCard({
-  player,
-  drawn,
-  currentWeek,
-  weekDrawn,
-  jackpotFee,
-  adminUnlocked,
-  isDrawing,
-  onWithdraw,
-}) {
-  const hits = player.numbers.filter((n) =>
-    drawn.some((d) => d.value === n)
-  );
-  const active = isActive(player);
-  const paidWeeks = getWeeksPaid(player, currentWeek, weekDrawn);
-  const jackpotPaid = paidWeeks * jackpotFee;
-
-  return (
-    <div
-      style={{
-        border: "2px solid #e5e7eb",
-        borderRadius: 18,
-        padding: 14,
-        background: active
-          ? "linear-gradient(180deg,#ffffff,#eff6ff)"
-          : "linear-gradient(180deg,#f9fafb,#f3f4f6)",
-        boxShadow: "0 8px 20px rgba(0,0,0,0.05)",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 10,
-          alignItems: "center",
-          marginBottom: 10,
-        }}
-      >
-        <strong style={{ fontSize: 18 }}>
-          {player.name} {!active ? "(withdrawn)" : ""}
-        </strong>
-        <span style={pill}>{hits.length}/6</span>
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
-          marginBottom: 10,
-        }}
-      >
-        {player.numbers.map((n) => {
-          const matched = drawn.some((d) => d.value === n);
-          return (
-            <div
-              key={n}
-              style={{
-                ...ball,
-                width: 38,
-                height: 38,
-                fontSize: 14,
-                background: matched ? ballColor(n) : "#e5e7eb",
-                color: matched ? "#fff" : "#111",
-              }}
-            >
-              {n}
+            <div>
+              <h3 style={{ marginBottom: 10 }}>Winners</h3>
+              {winners.length === 0 ? (
+                <p>No winners yet.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {winners.map((winner) => (
+                    <div
+                      key={winner.id}
+                      style={{
+                        border: "2px solid #ddd6fe",
+                        borderRadius: 12,
+                        padding: 12,
+                        background: "white",
+                      }}
+                    >
+                      <div style={{ fontWeight: "bold" }}>
+                        {winner.profiles?.display_name || "Winner"}
+                      </div>
+                      <div>
+                        {winner.win_type.toUpperCase()} • {formatMoney(winner.prize_amount)}
+                      </div>
+                      {winner.notes && (
+                        <div style={{ color: "#64748b", fontSize: 14 }}>{winner.notes}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          );
-        })}
-      </div>
-
-      <div style={{ color: "#374151", fontSize: 14, lineHeight: 1.6 }}>
-        <div>Weeks contributed: {paidWeeks}</div>
-        <div>Jackpot contributed: {formatMoney(jackpotPaid)}</div>
-        <div>Status: {active ? "Active" : `Stopped after week ${player.left_after_week}`}</div>
-      </div>
-
-      {adminUnlocked && (
-        <div style={{ marginTop: 10 }}>
-          <button
-            style={dangerBtn}
-            onClick={onWithdraw}
-            disabled={isDrawing}
-          >
-            {!drawn.length ? "Remove" : active ? "Withdraw" : "Withdrawn"}
-          </button>
+          </div>
         </div>
-      )}
+
+        <div style={{ ...cardStyle, background: "#f0fdf4" }}>
+          <h2 style={{ marginTop: 0, color: "#166534" }}>How This Version Works</h2>
+          <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.8 }}>
+            <li>Players pay membership, not per draw</li>
+            <li>Daily skill challenge unlocks numbers on the bingo card</li>
+            <li>Correct answers award points and number reveals</li>
+            <li>Leaderboard tracks weekly performance</li>
+            <li>First completed bingo line can win the weekly bingo prize</li>
+            <li>Jackpot and leaderboard prizes are platform-funded</li>
+          </ul>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1106,7 +752,7 @@ function StatCard({ title, value, bg }) {
   );
 }
 
-const card = {
+const cardStyle = {
   background: "#fff",
   borderRadius: 18,
   padding: 18,
@@ -1114,7 +760,7 @@ const card = {
   marginBottom: 16,
 };
 
-const statsGrid = {
+const gridStats = {
   display: "grid",
   gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
   gap: 12,
@@ -1123,93 +769,67 @@ const statsGrid = {
 
 const twoCol = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
   gap: 16,
 };
 
-const playersGrid = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-  gap: 14,
-};
-
-const input = {
+const selectStyle = {
   width: "100%",
-  maxWidth: 360,
-  display: "block",
-  marginBottom: 10,
+  maxWidth: 320,
   padding: 14,
   borderRadius: 12,
-  border: "2px solid #fed7aa",
-  fontSize: 15,
+  border: "2px solid #c7d2fe",
+  fontSize: 16,
   background: "white",
 };
 
-const darkBtn = {
-  background: "#111827",
-  color: "#fff",
-  border: "none",
-  padding: "12px 16px",
-  borderRadius: 12,
-  cursor: "pointer",
-  fontWeight: "bold",
-};
-
-const greyBtn = {
-  background: "#e5e7eb",
-  color: "#111827",
-  border: "none",
-  padding: "12px 16px",
-  borderRadius: 12,
-  cursor: "pointer",
-  fontWeight: "bold",
-};
-
-const yellowBtn = {
-  background: "linear-gradient(135deg,#f59e0b,#f97316)",
-  color: "white",
-  border: "none",
-  padding: "12px 16px",
-  borderRadius: 12,
-  cursor: "pointer",
-  fontWeight: "bold",
-};
-
-const bigYellowBtn = {
+const primaryBtn = {
   background: "linear-gradient(135deg,#f59e0b,#f97316)",
   color: "white",
   border: "none",
   padding: "14px 20px",
   borderRadius: 12,
-  cursor: "pointer",
   fontWeight: "bold",
-  fontSize: 16,
+  cursor: "pointer",
 };
 
-const dangerBtn = {
-  background: "linear-gradient(135deg,#ef4444,#dc2626)",
-  color: "#fff",
-  border: "none",
-  padding: "12px 16px",
+const answerBtn = {
+  border: "2px solid #d1d5db",
   borderRadius: 12,
+  padding: "12px 14px",
+  textAlign: "left",
   cursor: "pointer",
   fontWeight: "bold",
 };
 
-const ball = {
-  width: 42,
-  height: 42,
-  borderRadius: "50%",
+const bingoHeaderRow = {
+  display: "grid",
+  gridTemplateColumns: "repeat(5, 1fr)",
+  gap: 8,
+  marginBottom: 8,
+};
+
+const bingoHeaderCell = {
+  textAlign: "center",
+  fontWeight: "bold",
+  fontSize: 22,
+  color: "#1e3a8a",
+};
+
+const bingoGrid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(5, 1fr)",
+  gap: 8,
+};
+
+const bingoCell = {
+  minHeight: 62,
+  borderRadius: 14,
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
   fontWeight: "bold",
-};
-
-const pill = {
-  background: "linear-gradient(135deg,#8b5cf6,#7c3aed)",
-  color: "#fff",
-  padding: "5px 10px",
-  borderRadius: 999,
-  fontSize: 12,
+  fontSize: 18,
+  textAlign: "center",
+  padding: 6,
 };
