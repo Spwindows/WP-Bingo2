@@ -104,6 +104,10 @@ function cellIsHighlighted(cardNumbers, unlockedNumbers, rowIndex, colIndex) {
   });
 }
 
+function generateMemorySequence(length = 5) {
+  return Array.from({ length }, () => Math.floor(Math.random() * 9) + 1);
+}
+
 export default function App() {
   const [profiles, setProfiles] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState("");
@@ -117,7 +121,6 @@ export default function App() {
   const [winners, setWinners] = useState([]);
   const [attempt, setAttempt] = useState(null);
 
-  const [selectedAnswer, setSelectedAnswer] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -132,14 +135,15 @@ export default function App() {
   const [newPlayerPlan, setNewPlayerPlan] = useState("standard");
 
   const [questionTitle, setQuestionTitle] = useState("");
-  const [questionText, setQuestionText] = useState("");
-  const [questionA, setQuestionA] = useState("");
-  const [questionB, setQuestionB] = useState("");
-  const [questionC, setQuestionC] = useState("");
-  const [questionD, setQuestionD] = useState("");
-  const [correctAnswer, setCorrectAnswer] = useState("");
+  const [memoryLength, setMemoryLength] = useState("5");
   const [rewardPoints, setRewardPoints] = useState("5");
   const [rewardNumbers, setRewardNumbers] = useState("1");
+
+  const [memorySequence, setMemorySequence] = useState([]);
+  const [showSequence, setShowSequence] = useState(false);
+  const [memoryStarted, setMemoryStarted] = useState(false);
+  const [userInput, setUserInput] = useState("");
+  const [memoryLocked, setMemoryLocked] = useState(false);
 
   const currentProfile = useMemo(
     () => profiles.find((p) => p.id === selectedUserId) || null,
@@ -164,16 +168,23 @@ export default function App() {
   useEffect(() => {
     if (challenge) {
       setQuestionTitle(challenge.title || "");
-      setQuestionText(challenge.payload?.question || "");
-      setQuestionA(challenge.payload?.answers?.[0] || "");
-      setQuestionB(challenge.payload?.answers?.[1] || "");
-      setQuestionC(challenge.payload?.answers?.[2] || "");
-      setQuestionD(challenge.payload?.answers?.[3] || "");
-      setCorrectAnswer(challenge.payload?.correct_answer || "");
+      setMemoryLength(String(challenge.payload?.sequence_length ?? 5));
       setRewardPoints(String(challenge.reward_points ?? 5));
       setRewardNumbers(String(challenge.reward_numbers ?? 1));
     }
   }, [challenge]);
+
+  useEffect(() => {
+    resetLocalMemoryGame();
+  }, [selectedUserId, challenge?.id]);
+
+  function resetLocalMemoryGame() {
+    setMemorySequence([]);
+    setShowSequence(false);
+    setMemoryStarted(false);
+    setUserInput("");
+    setMemoryLocked(false);
+  }
 
   async function loadBootData() {
     const activeRound = await loadActiveRound();
@@ -191,7 +202,6 @@ export default function App() {
 
     if (data) {
       setProfiles(data);
-
       const nonAdminProfiles = data.filter((p) => !p.is_admin);
 
       if (!selectedUserId && nonAdminProfiles.length > 0) {
@@ -304,6 +314,7 @@ export default function App() {
         await loadUserData(selectedUserId, activeRound.id, latestChallenge.data?.id);
       }
     }
+
     await loadProfiles();
   }
 
@@ -399,7 +410,6 @@ export default function App() {
     setSelectedUserId(playerId);
     setAddingPlayer(false);
     setMessage("Player added successfully.");
-
     await refreshAll();
   }
 
@@ -449,7 +459,7 @@ export default function App() {
     setMembership(null);
     setCard(null);
     setAttempt(null);
-    setSelectedAnswer("");
+    resetLocalMemoryGame();
 
     await refreshAll();
   }
@@ -480,10 +490,9 @@ export default function App() {
     }
 
     setAttempt(null);
-    setSelectedAnswer("");
+    resetLocalMemoryGame();
     setResettingChallenge(false);
     setMessage("Today's challenge has been reset for this player.");
-
     await refreshAll();
   }
 
@@ -497,17 +506,16 @@ export default function App() {
       return;
     }
 
-    const answers = [questionA, questionB, questionC, questionD].map((x) => x.trim());
-    if (!questionTitle.trim() || !questionText.trim()) {
-      setMessage("Enter a title and question.");
+    const sequenceLength = Number(memoryLength || 5);
+    const points = Number(rewardPoints || 5);
+    const numbers = Number(rewardNumbers || 1);
+
+    if (!questionTitle.trim()) {
+      setMessage("Enter a challenge title.");
       return;
     }
-    if (answers.some((x) => !x)) {
-      setMessage("Enter all 4 answers.");
-      return;
-    }
-    if (!answers.includes(correctAnswer)) {
-      setMessage("Correct answer must exactly match one of the 4 answers.");
+    if (sequenceLength < 3 || sequenceLength > 9) {
+      setMessage("Sequence length should be between 3 and 9.");
       return;
     }
 
@@ -518,31 +526,60 @@ export default function App() {
       .from("daily_challenges")
       .update({
         title: questionTitle.trim(),
-        challenge_type: "trivia",
+        challenge_type: "memory",
         payload: {
-          question: questionText.trim(),
-          answers,
-          correct_answer: correctAnswer,
+          sequence_length: sequenceLength,
+          show_seconds: 3,
+          instructions: "Memorise the sequence and type it back in the same order.",
         },
-        reward_points: Number(rewardPoints || 5),
-        reward_numbers: Number(rewardNumbers || 1),
+        reward_points: points,
+        reward_numbers: numbers,
       })
       .eq("id", challenge.id);
 
     if (error) {
       console.error("Challenge save failed:", error);
       setSavingQuestion(false);
-      setMessage("Could not update question.");
+      setMessage("Could not update challenge.");
       return;
     }
 
     setSavingQuestion(false);
-    setMessage("Question updated.");
-
+    setMessage("Memory challenge updated.");
+    resetLocalMemoryGame();
     await refreshAll();
   }
 
-  async function submitChallenge() {
+  function startMemoryChallenge() {
+    if (attempt?.completed) {
+      setMessage("You already completed today's challenge.");
+      return;
+    }
+    if (!activeMembership) {
+      setMessage("Membership is inactive.");
+      return;
+    }
+
+    const length = Number(challenge?.payload?.sequence_length || 5);
+    const sequence = generateMemorySequence(length);
+
+    setMemorySequence(sequence);
+    setShowSequence(true);
+    setMemoryStarted(true);
+    setMemoryLocked(true);
+    setUserInput("");
+    setMessage("Memorise the sequence.");
+
+    const showMs = Number(challenge?.payload?.show_seconds || 3) * 1000;
+
+    setTimeout(() => {
+      setShowSequence(false);
+      setMemoryLocked(false);
+      setMessage("Enter the sequence in the same order, separated by spaces.");
+    }, showMs);
+  }
+
+  async function submitMemoryChallenge() {
     if (!currentProfile || !activeMembership || !card || !challenge) return;
 
     if (attempt?.completed) {
@@ -550,21 +587,51 @@ export default function App() {
       return;
     }
 
-    if (!selectedAnswer) {
-      setMessage("Please choose an answer.");
+    if (!memoryStarted || showSequence) {
+      setMessage("Start the memory challenge first.");
+      return;
+    }
+
+    if (!userInput.trim()) {
+      setMessage("Enter the sequence.");
       return;
     }
 
     setSubmitting(true);
     setMessage("");
 
-    const payload = challenge.payload || {};
-    const expected = String(payload.correct_answer || "").trim().toLowerCase();
-    const chosen = String(selectedAnswer || "").trim().toLowerCase();
+    const entered = userInput
+      .trim()
+      .split(/[\s,]+/)
+      .map((x) => Number(x))
+      .filter((x) => !Number.isNaN(x));
 
-    const isCorrect = chosen === expected;
-    const rewardNumbersValue = isCorrect ? Number(challenge.reward_numbers || 1) : 0;
-    const rewardPointsValue = isCorrect ? Number(challenge.reward_points || 5) : 0;
+    let correctCount = 0;
+    for (let i = 0; i < memorySequence.length; i += 1) {
+      if (entered[i] === memorySequence[i]) correctCount += 1;
+    }
+
+    let isCorrect = false;
+    let rewardPointsValue = 0;
+    let rewardNumbersValue = 0;
+    let score = 0;
+
+    if (correctCount === memorySequence.length) {
+      isCorrect = true;
+      rewardPointsValue = Number(challenge.reward_points || 5) + 5;
+      rewardNumbersValue = Math.max(2, Number(challenge.reward_numbers || 1));
+      score = 100;
+    } else if (correctCount >= memorySequence.length - 1) {
+      isCorrect = true;
+      rewardPointsValue = Number(challenge.reward_points || 5);
+      rewardNumbersValue = Number(challenge.reward_numbers || 1);
+      score = 80;
+    } else {
+      isCorrect = false;
+      rewardPointsValue = 0;
+      rewardNumbersValue = 0;
+      score = correctCount * 10;
+    }
 
     const newlyUnlocked = isCorrect
       ? pickRandomLockedNumbers(card.card_numbers, card.unlocked_numbers || [], rewardNumbersValue)
@@ -581,7 +648,7 @@ export default function App() {
       user_id: selectedUserId,
       round_id: round.id,
       challenge_id: challenge.id,
-      score: isCorrect ? 100 : 0,
+      score,
       correct: isCorrect,
       completed: true,
       points_awarded: rewardPointsValue,
@@ -612,14 +679,12 @@ export default function App() {
 
       leaderboardError = error;
     } else {
-      const { error } = await supabase
-        .from("leaderboard_entries")
-        .insert({
-          user_id: selectedUserId,
-          round_id: round.id,
-          points: rewardPointsValue,
-          updated_at: new Date().toISOString(),
-        });
+      const { error } = await supabase.from("leaderboard_entries").insert({
+        user_id: selectedUserId,
+        round_id: round.id,
+        points: rewardPointsValue,
+        updated_at: new Date().toISOString(),
+      });
 
       leaderboardError = error;
     }
@@ -663,13 +728,18 @@ export default function App() {
       }
     }
 
-    setSelectedAnswer("");
     setSubmitting(false);
-    setMessage(
-      isCorrect
-        ? `Correct! You earned ${rewardPointsValue} points and unlocked ${newlyUnlocked.length} number(s).`
-        : "Incorrect answer. Challenge recorded."
-    );
+    if (correctCount === memorySequence.length) {
+      setMessage(
+        `Perfect memory! +${rewardPointsValue} points and +${newlyUnlocked.length} number(s).`
+      );
+    } else if (correctCount >= memorySequence.length - 1) {
+      setMessage(
+        `Good memory! You got ${correctCount}/${memorySequence.length}. +${rewardPointsValue} points and +${newlyUnlocked.length} number(s).`
+      );
+    } else {
+      setMessage(`You got ${correctCount}/${memorySequence.length} correct. No reward this time.`);
+    }
 
     await refreshAll();
   }
@@ -707,10 +777,10 @@ export default function App() {
             <div>
               <h1 style={{ margin: 0, fontSize: 34 }}>Skill Bingo Club</h1>
               <div style={{ marginTop: 6, opacity: 0.95 }}>
-                £4.99 membership • Weekly challenge • Leaderboard • Jackpot prizes
+                £4.99 membership • Memory challenge • Leaderboard • Jackpot prizes
               </div>
               <div style={{ marginTop: 6, opacity: 0.95 }}>
-                Unlock numbers through skill, not luck
+                Unlock numbers through memory skill, not luck
               </div>
             </div>
           </div>
@@ -821,7 +891,7 @@ export default function App() {
             </div>
 
             <div style={{ ...cardStyle, background: "#fefce8" }}>
-              <h2 style={{ marginTop: 0, color: "#a16207" }}>Edit Today's Question</h2>
+              <h2 style={{ marginTop: 0, color: "#a16207" }}>Edit Today's Memory Challenge</h2>
               <div style={{ display: "grid", gap: 10, maxWidth: 520 }}>
                 <input
                   value={questionTitle}
@@ -829,51 +899,14 @@ export default function App() {
                   placeholder="Challenge title"
                   style={inputStyle}
                 />
-                <textarea
-                  value={questionText}
-                  onChange={(e) => setQuestionText(e.target.value)}
-                  placeholder="Question"
-                  style={{ ...inputStyle, minHeight: 90, resize: "vertical" }}
-                />
-                <input
-                  value={questionA}
-                  onChange={(e) => setQuestionA(e.target.value)}
-                  placeholder="Answer A"
-                  style={inputStyle}
-                />
-                <input
-                  value={questionB}
-                  onChange={(e) => setQuestionB(e.target.value)}
-                  placeholder="Answer B"
-                  style={inputStyle}
-                />
-                <input
-                  value={questionC}
-                  onChange={(e) => setQuestionC(e.target.value)}
-                  placeholder="Answer C"
-                  style={inputStyle}
-                />
-                <input
-                  value={questionD}
-                  onChange={(e) => setQuestionD(e.target.value)}
-                  placeholder="Answer D"
-                  style={inputStyle}
-                />
 
-                <select
-                  value={correctAnswer}
-                  onChange={(e) => setCorrectAnswer(e.target.value)}
+                <input
+                  value={memoryLength}
+                  onChange={(e) => setMemoryLength(e.target.value)}
+                  placeholder="Sequence length"
                   style={inputStyle}
-                >
-                  <option value="">Select correct answer</option>
-                  {[questionA, questionB, questionC, questionD]
-                    .filter(Boolean)
-                    .map((answer) => (
-                      <option key={answer} value={answer}>
-                        {answer}
-                      </option>
-                    ))}
-                </select>
+                  inputMode="numeric"
+                />
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   <input
@@ -893,7 +926,7 @@ export default function App() {
                 </div>
 
                 <button onClick={saveChallengeQuestion} disabled={savingQuestion} style={primaryBtn}>
-                  {savingQuestion ? "Saving..." : "Save Question"}
+                  {savingQuestion ? "Saving..." : "Save Memory Challenge"}
                 </button>
               </div>
             </div>
@@ -965,14 +998,19 @@ export default function App() {
           </div>
 
           <div style={{ ...cardStyle, background: "#fff7ed" }}>
-            <h2 style={{ marginTop: 0, color: "#c2410c" }}>Daily Challenge</h2>
+            <h2 style={{ marginTop: 0, color: "#c2410c" }}>Daily Memory Challenge</h2>
 
             {challenge ? (
               <>
                 <div style={{ marginBottom: 12, lineHeight: 1.7 }}>
                   <div><strong>Title:</strong> {challenge.title}</div>
                   <div><strong>Date:</strong> {challenge.challenge_date}</div>
-                  <div><strong>Reward:</strong> {challenge.reward_points} points + {challenge.reward_numbers} number(s)</div>
+                  <div>
+                    <strong>Reward:</strong> {challenge.reward_points} points + {challenge.reward_numbers} number(s)
+                  </div>
+                  <div>
+                    <strong>Sequence length:</strong> {challenge.payload?.sequence_length || 5}
+                  </div>
                 </div>
 
                 <div
@@ -985,43 +1023,84 @@ export default function App() {
                   }}
                 >
                   <div style={{ fontWeight: "bold", marginBottom: 10 }}>
-                    {challenge.payload?.question}
+                    Memorise the sequence, then type it back in the same order.
                   </div>
 
-                  <div style={{ display: "grid", gap: 10 }}>
-                    {(challenge.payload?.answers || []).map((answer) => (
-                      <button
-                        key={answer}
-                        type="button"
-                        onClick={() => setSelectedAnswer(answer)}
-                        disabled={attempt?.completed || submitting}
-                        style={{
-                          ...answerBtn,
-                          background:
-                            selectedAnswer === answer
-                              ? "linear-gradient(135deg,#3b82f6,#2563eb)"
-                              : "#fff",
-                          color: selectedAnswer === answer ? "white" : "#111827",
-                        }}
-                      >
-                        {answer}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                  {!memoryStarted && (
+                    <button
+                      onClick={startMemoryChallenge}
+                      disabled={attempt?.completed || submitting || !activeMembership}
+                      style={primaryBtn}
+                    >
+                      Start Challenge
+                    </button>
+                  )}
 
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <button
-                    onClick={submitChallenge}
-                    disabled={!activeMembership || attempt?.completed || submitting}
-                    style={primaryBtn}
-                  >
-                    {attempt?.completed
-                      ? "Challenge Completed"
-                      : submitting
-                      ? "Submitting..."
-                      : "Submit Answer"}
-                  </button>
+                  {showSequence && (
+                    <div
+                      style={{
+                        marginTop: 16,
+                        display: "flex",
+                        gap: 10,
+                        flexWrap: "wrap",
+                        justifyContent: "center",
+                      }}
+                    >
+                      {memorySequence.map((num, index) => (
+                        <div
+                          key={`${num}-${index}`}
+                          style={{
+                            width: 54,
+                            height: 54,
+                            borderRadius: 14,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontWeight: "bold",
+                            fontSize: 24,
+                            color: "white",
+                            background: "linear-gradient(135deg,#3b82f6,#2563eb)",
+                          }}
+                        >
+                          {num}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {memoryStarted && !showSequence && (
+                    <div style={{ marginTop: 14 }}>
+                      <input
+                        value={userInput}
+                        onChange={(e) => setUserInput(e.target.value)}
+                        placeholder="Enter numbers like: 4 7 1 9 3"
+                        style={inputStyle}
+                        disabled={memoryLocked || attempt?.completed || submitting}
+                      />
+
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+                        <button
+                          onClick={submitMemoryChallenge}
+                          disabled={attempt?.completed || submitting}
+                          style={primaryBtn}
+                        >
+                          {attempt?.completed
+                            ? "Challenge Completed"
+                            : submitting
+                            ? "Submitting..."
+                            : "Submit Sequence"}
+                        </button>
+
+                        <button
+                          onClick={startMemoryChallenge}
+                          disabled={attempt?.completed || submitting}
+                          style={greyBtn}
+                        >
+                          Replay Sequence
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ marginTop: 12, lineHeight: 1.7 }}>
@@ -1029,8 +1108,8 @@ export default function App() {
                     <strong>Today's status:</strong>{" "}
                     {attempt?.completed
                       ? attempt.correct
-                        ? "Completed correctly"
-                        : "Completed incorrectly"
+                        ? "Completed successfully"
+                        : "Completed unsuccessfully"
                       : "Not attempted yet"}
                   </div>
                   {message && (
@@ -1150,8 +1229,8 @@ export default function App() {
           <h2 style={{ marginTop: 0, color: "#166534" }}>How This Version Works</h2>
           <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.8 }}>
             <li>Players pay membership, not per draw</li>
-            <li>Daily skill challenge unlocks numbers on the bingo card</li>
-            <li>Correct answers award points and number reveals</li>
+            <li>Daily memory challenge unlocks numbers on the bingo card</li>
+            <li>Perfect memory earns bigger rewards</li>
             <li>Leaderboard tracks weekly performance</li>
             <li>First completed bingo line can win the weekly bingo prize</li>
             <li>Jackpot and leaderboard prizes are platform-funded</li>
@@ -1256,15 +1335,6 @@ const greyBtn = {
   border: "none",
   padding: "12px 16px",
   borderRadius: 12,
-  cursor: "pointer",
-  fontWeight: "bold",
-};
-
-const answerBtn = {
-  border: "2px solid #d1d5db",
-  borderRadius: 12,
-  padding: "12px 14px",
-  textAlign: "left",
   cursor: "pointer",
   fontWeight: "bold",
 };
