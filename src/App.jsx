@@ -4,9 +4,9 @@ const MEMBERSHIP_FEE = 1;
 const JACKPOT_FEE = 4;
 const WEEKLY_TOTAL = MEMBERSHIP_FEE + JACKPOT_FEE;
 const CURRENCY = "£";
-const ADMIN_PIN = "1234";
+const ADMIN_PIN = "2508";
 const MAX_PLAYERS = 50;
-const STORAGE_KEY = "wp-bingo-club-v10";
+const STORAGE_KEY = "wp-bingo-club-v11";
 
 function randomDraw() {
   const nums = [];
@@ -47,11 +47,18 @@ function dayToIndex(day) {
   return map[day];
 }
 
+function getWeeksPaid(player, currentWeek) {
+  if (player.leftAfterWeek !== null) return player.leftAfterWeek;
+  return currentWeek;
+}
+
+function isActive(player) {
+  return player.leftAfterWeek === null;
+}
+
 export default function App() {
   const [players, setPlayers] = useState([]);
   const [drawn, setDrawn] = useState([]);
-  const [name, setName] = useState("");
-  const [nums, setNums] = useState("");
   const [week, setWeek] = useState(1);
 
   const [winnerFound, setWinnerFound] = useState(false);
@@ -69,6 +76,9 @@ export default function App() {
   const [autoDrawDay, setAutoDrawDay] = useState("Friday");
   const [autoDrawTime, setAutoDrawTime] = useState("19:00");
   const [lastAutoDrawStamp, setLastAutoDrawStamp] = useState("");
+
+  const [adminName, setAdminName] = useState("");
+  const [adminNums, setAdminNums] = useState("");
 
   const [playerLookup, setPlayerLookup] = useState("");
   const [selectedPlayerName, setSelectedPlayerName] = useState("");
@@ -94,7 +104,7 @@ export default function App() {
       setLastAutoDrawStamp(saved.lastAutoDrawStamp || "");
       setSelectedPlayerName(saved.selectedPlayerName || "");
     } catch {
-      // ignore bad saved data
+      // ignore corrupted save
     }
   }, []);
 
@@ -136,24 +146,20 @@ export default function App() {
   ]);
 
   const roundStarted = drawn.length > 0;
-
-  function getWeeksPaid(player, currentWeek = week) {
-    if (player.leftAfterWeek !== null) return player.leftAfterWeek;
-    return currentWeek;
-  }
-
-  function isActive(player) {
-    return player.leftAfterWeek === null;
-  }
-
   const activeCount = players.filter(isActive).length;
 
   const totalMembershipFees = useMemo(() => {
-    return players.reduce((sum, p) => sum + getWeeksPaid(p) * MEMBERSHIP_FEE, 0);
+    return players.reduce(
+      (sum, p) => sum + getWeeksPaid(p, week) * MEMBERSHIP_FEE,
+      0
+    );
   }, [players, week]);
 
   const currentJackpot = useMemo(() => {
-    const paid = players.reduce((sum, p) => sum + getWeeksPaid(p) * JACKPOT_FEE, 0);
+    const paid = players.reduce(
+      (sum, p) => sum + getWeeksPaid(p, week) * JACKPOT_FEE,
+      0
+    );
     return paid + carryover;
   }, [players, week, carryover]);
 
@@ -276,12 +282,12 @@ export default function App() {
       return;
     }
 
-    const numbers = nums
+    const numbers = adminNums
       .split(",")
       .map((n) => parseInt(n.trim(), 10))
       .filter((n) => !Number.isNaN(n));
 
-    if (!name.trim()) {
+    if (!adminName.trim()) {
       alert("Enter name");
       return;
     }
@@ -304,7 +310,7 @@ export default function App() {
     }
 
     const duplicateName = players.some(
-      (p) => p.name.toLowerCase() === name.trim().toLowerCase()
+      (p) => p.name.toLowerCase() === adminName.trim().toLowerCase()
     );
 
     if (duplicateName) {
@@ -316,14 +322,14 @@ export default function App() {
       ...players,
       {
         id: crypto.randomUUID(),
-        name: name.trim(),
+        name: adminName.trim(),
         numbers: unique,
         leftAfterWeek: null,
       },
     ]);
 
-    setName("");
-    setNums("");
+    setAdminName("");
+    setAdminNums("");
   }
 
   function checkMyNumbers(e) {
@@ -528,8 +534,6 @@ export default function App() {
     setDrawn([]);
     setCurrentDraw([]);
     setLastDrawIds([]);
-    setName("");
-    setNums("");
     setWeek(1);
     setWinnerFound(false);
     setWinnerNames([]);
@@ -540,6 +544,8 @@ export default function App() {
     setLastAutoDrawStamp("");
     setPlayerLookup("");
     setSelectedPlayerName("");
+    setAdminName("");
+    setAdminNums("");
   }
 
   return (
@@ -944,14 +950,14 @@ export default function App() {
               <form onSubmit={addPlayer}>
                 <input
                   placeholder="Name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  value={adminName}
+                  onChange={(e) => setAdminName(e.target.value)}
                   style={input}
                 />
                 <input
                   placeholder="6 numbers e.g. 3,7,12,18,24,45"
-                  value={nums}
-                  onChange={(e) => setNums(e.target.value)}
+                  value={adminNums}
+                  onChange={(e) => setAdminNums(e.target.value)}
                   style={input}
                 />
                 <button
@@ -1091,7 +1097,8 @@ function PlayerCard({
     drawn.some((d) => d.value === n)
   );
   const active = player.leftAfterWeek === null;
-  const paidWeeks = player.leftAfterWeek !== null ? player.leftAfterWeek : week;
+  const paidWeeks =
+    player.leftAfterWeek !== null ? player.leftAfterWeek : week;
   const jackpotPaid = paidWeeks * jackpotFee;
 
   return (
