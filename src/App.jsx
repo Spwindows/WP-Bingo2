@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 
-const ENTRY = 5;
+const MEMBERSHIP_FEE = 1;
+const JACKPOT_FEE = 4;
+const WEEKLY_TOTAL = MEMBERSHIP_FEE + JACKPOT_FEE;
 const CURRENCY = "£";
 const ADMIN_PIN = "1234";
-const STORAGE_KEY = "wp-bingo-club-v6";
+const STORAGE_KEY = "wp-bingo-club-v7";
 
 function randomDraw() {
   const nums = [];
@@ -110,17 +112,17 @@ export default function App() {
     const active = players.filter(isActive);
 
     if (active.length === 0) {
-      const paidPot = players.reduce(
-        (sum, p) => sum + getWeeksPaid(p, week) * ENTRY,
+      const jackpotPaid = players.reduce(
+        (sum, p) => sum + getWeeksPaid(p, week) * JACKPOT_FEE,
         0
       );
 
-      setCarryover((prev) => prev + paidPot);
+      setCarryover((prev) => prev + jackpotPaid);
       setRoundCancelled(true);
 
       alert(
-        `Round cancelled — no active players remain.\nCarryover pot ${CURRENCY}${(
-          carryover + paidPot
+        `Round cancelled — no active players remain.\nCarryover jackpot ${CURRENCY}${(
+          carryover + jackpotPaid
         ).toFixed(2)}`
       );
     }
@@ -209,15 +211,13 @@ export default function App() {
     });
 
     if (winners.length > 0) {
-      const totalWinningsNow =
-        (players.reduce(
-          (sum, p) => sum + getWeeksPaid(p, week) * ENTRY,
+      const totalJackpotNow =
+        players.reduce(
+          (sum, p) => sum + getWeeksPaid(p, week) * JACKPOT_FEE,
           0
-        ) +
-          carryover) *
-        0.8;
+        ) + carryover;
 
-      const splitPrize = totalWinningsNow / winners.length;
+      const splitPrize = totalJackpotNow / winners.length;
       const winnerList = winners.map((w) => w.name);
 
       setWinnerFound(true);
@@ -229,7 +229,7 @@ export default function App() {
           id: crypto.randomUUID(),
           winners: winnerList,
           weekWon: week,
-          winnings: totalWinningsNow.toFixed(2),
+          jackpot: totalJackpotNow.toFixed(2),
           splitPrize: splitPrize.toFixed(2),
           when: new Date().toLocaleString(),
         },
@@ -241,7 +241,9 @@ export default function App() {
       alert(
         winners.length === 1
           ? `Winner: ${winnerList[0]}`
-          : `Winners: ${winnerList.join(", ")}\nEach wins ${CURRENCY}${splitPrize.toFixed(2)}`
+          : `Winners: ${winnerList.join(", ")}\nEach wins ${CURRENCY}${splitPrize.toFixed(
+              2
+            )}`
       );
     } else {
       setWeek((w) => w + 1);
@@ -321,7 +323,7 @@ export default function App() {
     if (!isActive(player)) return;
 
     const ok = window.confirm(
-      `${player.name} will stop paying after week ${week}. Continue?`
+      `${player.name} will stop contributing after week ${week}. Continue?`
     );
     if (!ok) return;
 
@@ -384,14 +386,17 @@ export default function App() {
     setRoundCancelled(false);
   }
 
-  const totalTakings = useMemo(() => {
-    const paid = players.reduce((sum, p) => sum + getWeeksPaid(p) * ENTRY, 0);
+  const totalMembershipFees = useMemo(() => {
+    return players.reduce((sum, p) => sum + getWeeksPaid(p) * MEMBERSHIP_FEE, 0);
+  }, [players, week]);
+
+  const currentJackpot = useMemo(() => {
+    const paid = players.reduce((sum, p) => sum + getWeeksPaid(p) * JACKPOT_FEE, 0);
     return paid + carryover;
   }, [players, week, carryover]);
 
-  const winnings = totalTakings * 0.8;
-  const splitWinnings =
-    winnerNames.length > 0 ? winnings / winnerNames.length : winnings;
+  const winningsEach =
+    winnerNames.length > 0 ? currentJackpot / winnerNames.length : currentJackpot;
 
   return (
     <div
@@ -436,7 +441,9 @@ export default function App() {
               <h1 style={{ margin: 0, fontSize: 36 }}>Weekly Bingo Club</h1>
               <div style={{ marginTop: 6, opacity: 0.95 }}>
                 {CURRENCY}
-                {ENTRY} per week • 6 numbers • Winner gets 80%
+                {WEEKLY_TOTAL} weekly • {CURRENCY}
+                {MEMBERSHIP_FEE} membership • {CURRENCY}
+                {JACKPOT_FEE} jackpot
               </div>
             </div>
           </div>
@@ -481,8 +488,13 @@ export default function App() {
             bg="linear-gradient(135deg,#10b981,#059669)"
           />
           <StatCard
+            title="Current Jackpot"
+            value={`${CURRENCY}${currentJackpot.toFixed(2)}`}
+            bg="linear-gradient(135deg,#3b82f6,#2563eb)"
+          />
+          <StatCard
             title={winnerNames.length > 1 ? "Winnings Each" : "Winnings"}
-            value={`${CURRENCY}${(winnerNames.length > 1 ? splitWinnings : winnings).toFixed(2)}`}
+            value={`${CURRENCY}${(winnerNames.length > 1 ? winningsEach : currentJackpot).toFixed(2)}`}
             bg="linear-gradient(135deg,#8b5cf6,#7c3aed)"
           />
         </div>
@@ -496,10 +508,29 @@ export default function App() {
               fontWeight: "bold",
             }}
           >
-            Carryover pot: {CURRENCY}
+            Carryover jackpot: {CURRENCY}
             {carryover.toFixed(2)}
           </div>
         )}
+
+        <div
+          style={{
+            padding: 16,
+            borderRadius: 14,
+            background: "#fff7ed",
+            marginBottom: 16,
+            border: "2px solid #fdba74",
+          }}
+        >
+          <h3 style={{ marginTop: 0 }}>Progressive Jackpot</h3>
+          <p style={{ marginBottom: 0, lineHeight: 1.7 }}>
+            Each week players contribute <strong>{CURRENCY}{JACKPOT_FEE}</strong> to the jackpot pool.
+            Six numbers are drawn weekly. Numbers that match a player's ticket remain
+            marked until all six numbers are matched. The jackpot continues to grow
+            every week until one or more players complete all six numbers. If
+            multiple players win in the same draw, the jackpot is split equally.
+          </p>
+        </div>
 
         <div style={{ ...card, background: "#ffffffee" }}>
           <div
@@ -612,8 +643,8 @@ export default function App() {
               }}
             >
               {winnerNames.length === 1
-                ? `Winner: ${winnerNames[0]} — winnings ${CURRENCY}${winnings.toFixed(2)}`
-                : `Winners: ${winnerNames.join(", ")} — each wins ${CURRENCY}${splitWinnings.toFixed(2)}`}
+                ? `Winner: ${winnerNames[0]} — winnings ${CURRENCY}${currentJackpot.toFixed(2)}`
+                : `Winners: ${winnerNames.join(", ")} — each wins ${CURRENCY}${winningsEach.toFixed(2)}`}
             </div>
           )}
 
@@ -628,7 +659,7 @@ export default function App() {
                 fontWeight: "bold",
               }}
             >
-              Round cancelled — no active players remain. Carryover rolled into next
+              Round cancelled — no active players remain. Jackpot carried into next
               round.
             </div>
           )}
@@ -663,19 +694,27 @@ export default function App() {
           </div>
 
           <div style={{ ...card, background: "#f0fdf4" }}>
-            <h2 style={{ marginTop: 0, color: "#166534" }}>Rules</h2>
+            <h2 style={{ marginTop: 0, color: "#166534" }}>Rules & Membership</h2>
             <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
-              <li>Players must join before the first draw</li>
               <li>
-                {CURRENCY}
-                {ENTRY} per week per active player
+                Weekly contribution is <strong>{CURRENCY}{WEEKLY_TOTAL}</strong>
               </li>
-              <li>Withdrawn players stop paying future weeks</li>
-              <li>Previous paid weeks still count in the pot</li>
-              <li>Only active players can win</li>
-              <li>Winnings are 80% of the pot</li>
-              <li>If multiple players win, winnings are split equally</li>
-              <li>If everyone withdraws, the pot carries over</li>
+              <li>
+                <strong>{CURRENCY}{MEMBERSHIP_FEE}</strong> is a club membership/admin fee
+              </li>
+              <li>
+                <strong>{CURRENCY}{JACKPOT_FEE}</strong> goes into the progressive jackpot pool
+              </li>
+              <li>
+                The jackpot rolls over each week until a player matches all <strong>6 numbers</strong>
+              </li>
+              <li>Numbers are drawn weekly and matches are permanently marked</li>
+              <li>Players keep the same numbers for the entire round</li>
+              <li>The winner receives <strong>100% of the jackpot pool</strong></li>
+              <li>If multiple players match all 6 numbers in the same draw, the jackpot is split equally</li>
+              <li>Players may withdraw but previously contributed weeks remain in the jackpot</li>
+              <li>If all players withdraw, the jackpot carries forward to the next round</li>
+              <li>This bingo club operates as a <strong>private members social club</strong></li>
             </ul>
           </div>
         </div>
@@ -692,7 +731,7 @@ export default function App() {
                 );
                 const active = isActive(p);
                 const paidWeeks = getWeeksPaid(p);
-                const paidAmount = paidWeeks * ENTRY;
+                const jackpotPaid = paidWeeks * JACKPOT_FEE;
 
                 return (
                   <div
@@ -751,10 +790,10 @@ export default function App() {
                     </div>
 
                     <div style={{ color: "#374151", fontSize: 14, lineHeight: 1.6 }}>
-                      <div>Weeks paid: {paidWeeks}</div>
+                      <div>Weeks contributed: {paidWeeks}</div>
                       <div>
-                        Total paid: {CURRENCY}
-                        {paidAmount.toFixed(2)}
+                        Jackpot contributed: {CURRENCY}
+                        {jackpotPaid.toFixed(2)}
                       </div>
                       <div>
                         Status:{" "}
@@ -795,16 +834,21 @@ export default function App() {
                   }}
                 >
                   <strong style={{ color: "#7c3aed" }}>
-                    {item.winners ? item.winners.join(", ") : item.winner}
+                    {item.winners.join(", ")}
                   </strong>
                   <div>Week won: {item.weekWon}</div>
                   <div>
-                    Winnings: {CURRENCY}
-                    {item.winnings}
+                    Jackpot: {CURRENCY}
+                    {item.jackpot}
                   </div>
-                  {item.splitPrize && item.winners?.length > 1 && (
+                  {item.winners.length > 1 ? (
                     <div>
                       Each won: {CURRENCY}
+                      {item.splitPrize}
+                    </div>
+                  ) : (
+                    <div>
+                      Winnings: {CURRENCY}
                       {item.splitPrize}
                     </div>
                   )}
@@ -813,6 +857,17 @@ export default function App() {
               ))}
             </div>
           )}
+        </div>
+
+        <div
+          style={{
+            ...card,
+            background: "#eff6ff",
+            color: "#1e3a8a",
+          }}
+        >
+          <strong>Membership fees collected:</strong> {CURRENCY}
+          {totalMembershipFees.toFixed(2)}
         </div>
       </div>
 
