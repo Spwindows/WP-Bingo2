@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
 const ENTRY = 5;
+const CURRENCY = "£";
 const ADMIN_PIN = "1234";
-const STORAGE_KEY = "wp-bingo-club-v2";
+const STORAGE_KEY = "wp-bingo-club-v3";
 
 function randomDraw() {
   const nums = [];
@@ -141,7 +142,9 @@ export default function App() {
     const activePlayers = players.filter(isActive);
 
     const winner = activePlayers.find((p) => {
-      const hits = p.numbers.filter((n) => updated.includes(n));
+      const hits = p.numbers.filter((n) =>
+        updated.some((d) => d.value === n)
+      );
       return hits.length === 6;
     });
 
@@ -327,7 +330,7 @@ export default function App() {
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 14,
+              gap: 16,
               flexWrap: "wrap",
             }}
           >
@@ -335,18 +338,19 @@ export default function App() {
               src="/logo.png"
               alt="Logo"
               style={{
-                height: 70,
-                width: 70,
-                borderRadius: 16,
+                height: 110,
+                width: 110,
+                borderRadius: 20,
                 objectFit: "cover",
                 background: "white",
-                padding: 6,
+                padding: 8,
+                boxShadow: "0 8px 20px rgba(0,0,0,0.15)",
               }}
             />
             <div>
               <h1 style={{ margin: 0, fontSize: 36 }}>Weekly Bingo Club</h1>
               <div style={{ marginTop: 6, opacity: 0.95 }}>
-                $5 per week • 6 numbers • Winner gets 80%
+                {CURRENCY}{ENTRY} per week • 6 numbers • Winner gets 80%
               </div>
             </div>
           </div>
@@ -368,9 +372,9 @@ export default function App() {
         <div style={statsGrid}>
           <StatCard title="Week" value={week} bg="linear-gradient(135deg,#f59e0b,#f97316)" />
           <StatCard title="Active Players" value={activeCount} bg="linear-gradient(135deg,#10b981,#059669)" />
-          <StatCard title="Takings" value={`$${totalTakings.toFixed(2)}`} bg="linear-gradient(135deg,#3b82f6,#2563eb)" />
-          <StatCard title="Payout 80%" value={`$${payout.toFixed(2)}`} bg="linear-gradient(135deg,#8b5cf6,#7c3aed)" />
-          <StatCard title="Retained 20%" value={`$${retained.toFixed(2)}`} bg="linear-gradient(135deg,#ec4899,#db2777)" />
+          <StatCard title="Takings" value={`${CURRENCY}${totalTakings.toFixed(2)}`} bg="linear-gradient(135deg,#3b82f6,#2563eb)" />
+          <StatCard title="Payout 80%" value={`${CURRENCY}${payout.toFixed(2)}`} bg="linear-gradient(135deg,#8b5cf6,#7c3aed)" />
+          <StatCard title="Retained 20%" value={`${CURRENCY}${retained.toFixed(2)}`} bg="linear-gradient(135deg,#ec4899,#db2777)" />
         </div>
 
         <div style={{ ...card, background: "#ffffffee" }}>
@@ -382,7 +386,7 @@ export default function App() {
                 Current draw
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
-                {currentDraw.map((entry, i) => (
+                {currentDraw.map((entry) => (
                   <div
                     key={entry.id}
                     style={{
@@ -441,7 +445,7 @@ export default function App() {
                 fontWeight: "bold",
               }}
             >
-              Winner: {winnerName} — payout ${payout.toFixed(2)}
+              Winner: {winnerName} — payout {CURRENCY}{payout.toFixed(2)}
             </div>
           )}
         </div>
@@ -476,7 +480,7 @@ export default function App() {
             <h2 style={{ marginTop: 0, color: "#166534" }}>Rules</h2>
             <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
               <li>Players must join before the first draw</li>
-              <li>$5 per week per active player</li>
+              <li>{CURRENCY}{ENTRY} per week per active player</li>
               <li>Withdrawn players stop paying future weeks</li>
               <li>Previous paid weeks still count in the pot</li>
               <li>Only active players can win</li>
@@ -550,7 +554,7 @@ export default function App() {
 
                     <div style={{ color: "#374151", fontSize: 14, lineHeight: 1.6 }}>
                       <div>Weeks paid: {paidWeeks}</div>
-                      <div>Total paid: ${paidAmount.toFixed(2)}</div>
+                      <div>Total paid: {CURRENCY}{paidAmount.toFixed(2)}</div>
                       <div>Status: {active ? "Active" : `Stopped after week ${p.leftAfterWeek}`}</div>
                     </div>
 
@@ -584,8 +588,8 @@ export default function App() {
                 >
                   <strong style={{ color: "#7c3aed" }}>{item.winner}</strong>
                   <div>Week won: {item.weekWon}</div>
-                  <div>Total takings: ${item.takings}</div>
-                  <div>Payout: ${item.payout}</div>
+                  <div>Total takings: {CURRENCY}{item.takings}</div>
+                  <div>Payout: {CURRENCY}{item.payout}</div>
                   <div style={{ color: "#666", fontSize: 13 }}>{item.when}</div>
                 </div>
               ))}
