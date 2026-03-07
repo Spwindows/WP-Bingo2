@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 
 const ENTRY = 5;
-const ADMIN_PIN = "1234"; // change this to your own PIN
-const STORAGE_KEY = "wp-bingo-club-v1";
+const ADMIN_PIN = "1234";
+const STORAGE_KEY = "wp-bingo-club-v2";
 
 function randomDraw() {
   const nums = [];
@@ -21,7 +21,7 @@ function ballColor(num) {
     "#9333ea",
     "#ea580c",
     "#0891b2",
-    "#be123c",
+    "#db2777",
   ];
   return colors[num % colors.length];
 }
@@ -37,14 +37,16 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
 
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [currentDraw, setCurrentDraw] = useState([]);
+  const [lastDrawIds, setLastDrawIds] = useState([]);
+
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const saved = JSON.parse(raw);
       setPlayers(saved.players || []);
       setDrawn(saved.drawn || []);
-      setName("");
-      setNums("");
       setWeek(saved.week || 1);
       setWinnerFound(saved.winnerFound || false);
       setWinnerName(saved.winnerName || "");
@@ -135,27 +137,8 @@ export default function App() {
     return player.leftAfterWeek === null;
   }
 
-  function drawNumbers() {
-    if (!adminUnlocked) {
-      alert("Unlock admin first");
-      return;
-    }
-
-    if (winnerFound) {
-      alert("Winner already found");
-      return;
-    }
-
+  function finishDraw(updated, drawIdsForHighlight) {
     const activePlayers = players.filter(isActive);
-
-    if (activePlayers.length === 0) {
-      alert("Add players first");
-      return;
-    }
-
-    const newNumbers = randomDraw();
-    const updated = [...drawn, ...newNumbers];
-    setDrawn(updated);
 
     const winner = activePlayers.find((p) => {
       const hits = p.numbers.filter((n) => updated.includes(n));
@@ -178,7 +161,6 @@ export default function App() {
           weekWon: week,
           payout: payoutNow.toFixed(2),
           takings: totalTakingsNow.toFixed(2),
-          drawnAtWin: [...updated],
           when: new Date().toLocaleString(),
         },
         ...history,
@@ -187,6 +169,57 @@ export default function App() {
     } else {
       setWeek((w) => w + 1);
     }
+
+    setIsDrawing(false);
+    setCurrentDraw([]);
+    setLastDrawIds(drawIdsForHighlight);
+  }
+
+  function drawNumbers() {
+    if (!adminUnlocked) {
+      alert("Unlock admin first");
+      return;
+    }
+
+    if (winnerFound) {
+      alert("Winner already found");
+      return;
+    }
+
+    if (isDrawing) {
+      return;
+    }
+
+    const activePlayers = players.filter(isActive);
+
+    if (activePlayers.length === 0) {
+      alert("Add players first");
+      return;
+    }
+
+    const newNumbers = randomDraw();
+    const newEntries = newNumbers.map((n) => ({
+      id: crypto.randomUUID(),
+      value: n,
+    }));
+
+    setIsDrawing(true);
+    setCurrentDraw([]);
+    setLastDrawIds([]);
+
+    newEntries.forEach((entry, index) => {
+      setTimeout(() => {
+        setCurrentDraw((prev) => [...prev, entry]);
+      }, index * 500);
+    });
+
+    setTimeout(() => {
+      setDrawn((prev) => {
+        const updated = [...prev, ...newEntries];
+        finishDraw(updated, newEntries.map((x) => x.id));
+        return updated;
+      });
+    }, newEntries.length * 500 + 250);
   }
 
   function withdrawPlayer(id) {
@@ -223,10 +256,14 @@ export default function App() {
       return;
     }
 
+    if (isDrawing) return;
+
     const ok = window.confirm("Start a new round?");
     if (!ok) return;
 
     setDrawn([]);
+    setCurrentDraw([]);
+    setLastDrawIds([]);
     setWeek(1);
     setWinnerFound(false);
     setWinnerName("");
@@ -244,11 +281,15 @@ export default function App() {
       return;
     }
 
+    if (isDrawing) return;
+
     const ok = window.confirm("Reset everything?");
     if (!ok) return;
 
     setPlayers([]);
     setDrawn([]);
+    setCurrentDraw([]);
+    setLastDrawIds([]);
     setName("");
     setNums("");
     setWeek(1);
@@ -270,12 +311,18 @@ export default function App() {
       style={{
         padding: 16,
         fontFamily: "Arial, sans-serif",
-        background: "#f3f4f6",
+        background: "linear-gradient(180deg, #eff6ff 0%, #fdf2f8 50%, #f0fdf4 100%)",
         minHeight: "100vh",
       }}
     >
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-        <div style={card}>
+        <div
+          style={{
+            ...card,
+            background: "linear-gradient(135deg, #1d4ed8, #7c3aed, #db2777)",
+            color: "white",
+          }}
+        >
           <div
             style={{
               display: "flex",
@@ -287,60 +334,98 @@ export default function App() {
             <img
               src="/logo.png"
               alt="Logo"
-              style={{ height: 64, width: "auto", borderRadius: 12 }}
+              style={{
+                height: 70,
+                width: 70,
+                borderRadius: 16,
+                objectFit: "cover",
+                background: "white",
+                padding: 6,
+              }}
             />
             <div>
-              <h1 style={{ margin: 0 }}>Weekly Bingo Club</h1>
-              <div style={{ color: "#666", marginTop: 4 }}>
+              <h1 style={{ margin: 0, fontSize: 36 }}>Weekly Bingo Club</h1>
+              <div style={{ marginTop: 6, opacity: 0.95 }}>
                 $5 per week • 6 numbers • Winner gets 80%
               </div>
             </div>
           </div>
 
-          <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
             {!adminUnlocked ? (
               <button style={darkBtn} onClick={unlockAdmin}>Unlock Admin</button>
             ) : (
               <button style={greyBtn} onClick={lockAdmin}>Lock Admin</button>
             )}
-            <button style={darkBtn} onClick={drawNumbers}>Draw Numbers</button>
-            <button style={greyBtn} onClick={newRound}>New Round</button>
-            <button style={dangerBtn} onClick={resetEverything}>Reset All</button>
+            <button style={yellowBtn} onClick={drawNumbers} disabled={isDrawing}>
+              {isDrawing ? "Drawing..." : "Draw Numbers"}
+            </button>
+            <button style={greyBtn} onClick={newRound} disabled={isDrawing}>New Round</button>
+            <button style={dangerBtn} onClick={resetEverything} disabled={isDrawing}>Reset All</button>
           </div>
         </div>
 
         <div style={statsGrid}>
-          <StatCard title="Week" value={week} />
-          <StatCard title="Active Players" value={activeCount} />
-          <StatCard title="Takings" value={`$${totalTakings.toFixed(2)}`} />
-          <StatCard title="Payout 80%" value={`$${payout.toFixed(2)}`} />
-          <StatCard title="Retained 20%" value={`$${retained.toFixed(2)}`} />
+          <StatCard title="Week" value={week} bg="linear-gradient(135deg,#f59e0b,#f97316)" />
+          <StatCard title="Active Players" value={activeCount} bg="linear-gradient(135deg,#10b981,#059669)" />
+          <StatCard title="Takings" value={`$${totalTakings.toFixed(2)}`} bg="linear-gradient(135deg,#3b82f6,#2563eb)" />
+          <StatCard title="Payout 80%" value={`$${payout.toFixed(2)}`} bg="linear-gradient(135deg,#8b5cf6,#7c3aed)" />
+          <StatCard title="Retained 20%" value={`$${retained.toFixed(2)}`} bg="linear-gradient(135deg,#ec4899,#db2777)" />
         </div>
 
-        <div style={card}>
-          <h2 style={{ marginTop: 0 }}>Numbers Drawn</h2>
+        <div style={{ ...card, background: "#ffffffee" }}>
+          <h2 style={{ marginTop: 0, color: "#1e3a8a" }}>Numbers Drawn</h2>
+
+          {currentDraw.length > 0 && (
+            <>
+              <div style={{ marginBottom: 10, fontWeight: "bold", color: "#7c3aed" }}>
+                Current draw
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
+                {currentDraw.map((entry, i) => (
+                  <div
+                    key={entry.id}
+                    style={{
+                      ...ball,
+                      background: ballColor(entry.value),
+                      color: "#fff",
+                      boxShadow: "0 10px 18px rgba(0,0,0,0.18)",
+                      transform: "scale(1)",
+                      animation: "popIn 0.35s ease",
+                    }}
+                  >
+                    {entry.value}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
           {drawn.length === 0 ? (
             <p style={{ color: "#666" }}>No numbers drawn yet</p>
           ) : (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              {drawn.map((n, i) => (
+              {drawn.map((entry) => (
                 <div
-                  key={`${n}-${i}`}
+                  key={entry.id}
                   style={{
                     ...ball,
-                    background: ballColor(n),
+                    background: ballColor(entry.value),
                     color: "#fff",
-                    transform: "scale(1)",
-                    transition: "transform 0.2s ease",
+                    boxShadow: lastDrawIds.includes(entry.id)
+                      ? "0 0 0 4px rgba(250,204,21,0.45), 0 8px 18px rgba(0,0,0,0.18)"
+                      : "0 6px 14px rgba(0,0,0,0.18)",
+                    transform: lastDrawIds.includes(entry.id) ? "scale(1.08)" : "scale(1)",
+                    transition: "all 0.25s ease",
                   }}
                 >
-                  {n}
+                  {entry.value}
                 </div>
               ))}
             </div>
           )}
 
-          <p style={{ marginTop: 14 }}>
+          <p style={{ marginTop: 16 }}>
             <strong>Round status:</strong>{" "}
             {winnerFound ? "Winner found" : roundStarted ? "In progress" : "Open for entries"}
           </p>
@@ -350,9 +435,9 @@ export default function App() {
               style={{
                 marginTop: 12,
                 padding: 14,
-                borderRadius: 12,
-                background: "#dcfce7",
-                color: "#166534",
+                borderRadius: 14,
+                background: "linear-gradient(135deg,#22c55e,#16a34a)",
+                color: "white",
                 fontWeight: "bold",
               }}
             >
@@ -362,10 +447,12 @@ export default function App() {
         </div>
 
         <div style={twoCol}>
-          <div style={card}>
-            <h2 style={{ marginTop: 0 }}>Join</h2>
+          <div style={{ ...card, background: "#fff7ed" }}>
+            <h2 style={{ marginTop: 0, color: "#c2410c" }}>Join</h2>
             {roundStarted ? (
-              <p style={{ color: "#b91c1c" }}>Entries closed until next round</p>
+              <p style={{ color: "#b91c1c", fontWeight: "bold" }}>
+                Entries closed until next round
+              </p>
             ) : (
               <form onSubmit={addPlayer}>
                 <input
@@ -380,13 +467,13 @@ export default function App() {
                   onChange={(e) => setNums(e.target.value)}
                   style={input}
                 />
-                <button type="submit" style={darkBtn}>Add Player</button>
+                <button type="submit" style={yellowBtn}>Add Player</button>
               </form>
             )}
           </div>
 
-          <div style={card}>
-            <h2 style={{ marginTop: 0 }}>Rules</h2>
+          <div style={{ ...card, background: "#f0fdf4" }}>
+            <h2 style={{ marginTop: 0, color: "#166534" }}>Rules</h2>
             <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
               <li>Players must join before the first draw</li>
               <li>$5 per week per active player</li>
@@ -398,14 +485,16 @@ export default function App() {
           </div>
         </div>
 
-        <div style={card}>
-          <h2 style={{ marginTop: 0 }}>Players</h2>
+        <div style={{ ...card, background: "#ffffffee" }}>
+          <h2 style={{ marginTop: 0, color: "#7c2d12" }}>Players</h2>
           {players.length === 0 ? (
             <p style={{ color: "#666" }}>No players added yet</p>
           ) : (
             <div style={playersGrid}>
               {players.map((p) => {
-                const hits = p.numbers.filter((n) => drawn.includes(n));
+                const hits = p.numbers.filter((n) =>
+                  drawn.some((d) => d.value === n)
+                );
                 const active = isActive(p);
                 const paidWeeks = getWeeksPaid(p);
                 const paidAmount = paidWeeks * ENTRY;
@@ -414,10 +503,13 @@ export default function App() {
                   <div
                     key={p.id}
                     style={{
-                      border: "1px solid #e5e7eb",
-                      borderRadius: 14,
+                      border: "2px solid #e5e7eb",
+                      borderRadius: 18,
                       padding: 14,
-                      background: active ? "#fff" : "#f9fafb",
+                      background: active
+                        ? "linear-gradient(180deg,#ffffff,#eff6ff)"
+                        : "linear-gradient(180deg,#f9fafb,#f3f4f6)",
+                      boxShadow: "0 8px 20px rgba(0,0,0,0.05)",
                     }}
                   >
                     <div
@@ -429,22 +521,24 @@ export default function App() {
                         marginBottom: 10,
                       }}
                     >
-                      <strong>{p.name} {!active ? "(withdrawn)" : ""}</strong>
+                      <strong style={{ fontSize: 18 }}>
+                        {p.name} {!active ? "(withdrawn)" : ""}
+                      </strong>
                       <span style={pill}>{hits.length}/6</span>
                     </div>
 
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
                       {p.numbers.map((n) => {
-                        const matched = drawn.includes(n);
+                        const matched = drawn.some((d) => d.value === n);
                         return (
                           <div
                             key={n}
                             style={{
                               ...ball,
-                              width: 36,
-                              height: 36,
+                              width: 38,
+                              height: 38,
                               fontSize: 14,
-                              background: matched ? "#16a34a" : "#e5e7eb",
+                              background: matched ? ballColor(n) : "#e5e7eb",
                               color: matched ? "#fff" : "#111",
                             }}
                           >
@@ -454,14 +548,14 @@ export default function App() {
                       })}
                     </div>
 
-                    <div style={{ color: "#444", fontSize: 14, lineHeight: 1.6 }}>
+                    <div style={{ color: "#374151", fontSize: 14, lineHeight: 1.6 }}>
                       <div>Weeks paid: {paidWeeks}</div>
                       <div>Total paid: ${paidAmount.toFixed(2)}</div>
                       <div>Status: {active ? "Active" : `Stopped after week ${p.leftAfterWeek}`}</div>
                     </div>
 
                     <div style={{ marginTop: 10 }}>
-                      <button style={dangerBtn} onClick={() => withdrawPlayer(p.id)}>
+                      <button style={dangerBtn} onClick={() => withdrawPlayer(p.id)} disabled={isDrawing}>
                         {!roundStarted ? "Remove" : active ? "Withdraw" : "Withdrawn"}
                       </button>
                     </div>
@@ -472,8 +566,8 @@ export default function App() {
           )}
         </div>
 
-        <div style={card}>
-          <h2 style={{ marginTop: 0 }}>Winner History</h2>
+        <div style={{ ...card, background: "#faf5ff" }}>
+          <h2 style={{ marginTop: 0, color: "#6b21a8" }}>Winner History</h2>
           {history.length === 0 ? (
             <p style={{ color: "#666" }}>No completed rounds yet</p>
           ) : (
@@ -482,13 +576,13 @@ export default function App() {
                 <div
                   key={item.id}
                   style={{
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 12,
+                    border: "2px solid #e9d5ff",
+                    borderRadius: 14,
                     padding: 12,
-                    background: "#fff",
+                    background: "white",
                   }}
                 >
-                  <strong>{item.winner}</strong>
+                  <strong style={{ color: "#7c3aed" }}>{item.winner}</strong>
                   <div>Week won: {item.weekWon}</div>
                   <div>Total takings: ${item.takings}</div>
                   <div>Payout: ${item.payout}</div>
@@ -499,14 +593,30 @@ export default function App() {
           )}
         </div>
       </div>
+
+      <style>{`
+        @keyframes popIn {
+          0% { transform: scale(0.3); opacity: 0; }
+          80% { transform: scale(1.12); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 }
 
-function StatCard({ title, value }) {
+function StatCard({ title, value, bg }) {
   return (
-    <div style={card}>
-      <div style={{ color: "#666", fontSize: 13, marginBottom: 6 }}>{title}</div>
+    <div
+      style={{
+        borderRadius: 18,
+        padding: 18,
+        background: bg,
+        color: "white",
+        boxShadow: "0 8px 24px rgba(0,0,0,0.10)",
+      }}
+    >
+      <div style={{ fontSize: 13, marginBottom: 6, opacity: 0.95 }}>{title}</div>
       <div style={{ fontSize: 28, fontWeight: "bold" }}>{value}</div>
     </div>
   );
@@ -545,9 +655,10 @@ const input = {
   display: "block",
   marginBottom: 10,
   padding: 12,
-  borderRadius: 10,
-  border: "1px solid #d1d5db",
+  borderRadius: 12,
+  border: "2px solid #fed7aa",
   fontSize: 15,
+  background: "white",
 };
 
 const darkBtn = {
@@ -555,8 +666,9 @@ const darkBtn = {
   color: "#fff",
   border: "none",
   padding: "11px 14px",
-  borderRadius: 10,
+  borderRadius: 12,
   cursor: "pointer",
+  fontWeight: "bold",
 };
 
 const greyBtn = {
@@ -564,17 +676,29 @@ const greyBtn = {
   color: "#111827",
   border: "none",
   padding: "11px 14px",
-  borderRadius: 10,
+  borderRadius: 12,
   cursor: "pointer",
+  fontWeight: "bold",
+};
+
+const yellowBtn = {
+  background: "linear-gradient(135deg,#f59e0b,#f97316)",
+  color: "white",
+  border: "none",
+  padding: "11px 14px",
+  borderRadius: 12,
+  cursor: "pointer",
+  fontWeight: "bold",
 };
 
 const dangerBtn = {
-  background: "#fee2e2",
-  color: "#991b1b",
+  background: "linear-gradient(135deg,#ef4444,#dc2626)",
+  color: "#fff",
   border: "none",
   padding: "10px 14px",
-  borderRadius: 10,
+  borderRadius: 12,
   cursor: "pointer",
+  fontWeight: "bold",
 };
 
 const ball = {
@@ -588,8 +712,8 @@ const ball = {
 };
 
 const pill = {
-  background: "#eef2ff",
-  color: "#4338ca",
+  background: "linear-gradient(135deg,#8b5cf6,#7c3aed)",
+  color: "#fff",
   padding: "5px 10px",
   borderRadius: 999,
   fontSize: 12,
