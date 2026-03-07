@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 const ENTRY = 5;
 const CURRENCY = "£";
 const ADMIN_PIN = "1234";
-const STORAGE_KEY = "wp-bingo-club-v5";
+const STORAGE_KEY = "wp-bingo-club-v6";
 
 function randomDraw() {
   const nums = [];
@@ -33,11 +33,12 @@ export default function App() {
   const [name, setName] = useState("");
   const [nums, setNums] = useState("");
   const [week, setWeek] = useState(1);
-  const [winnerFound, setWinnerFound] = useState(false);
-  const [winnerName, setWinnerName] = useState("");
-  const [history, setHistory] = useState([]);
-  const [adminUnlocked, setAdminUnlocked] = useState(false);
 
+  const [winnerFound, setWinnerFound] = useState(false);
+  const [winnerNames, setWinnerNames] = useState([]);
+  const [history, setHistory] = useState([]);
+
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentDraw, setCurrentDraw] = useState([]);
   const [lastDrawIds, setLastDrawIds] = useState([]);
@@ -52,7 +53,7 @@ export default function App() {
       setDrawn(saved.drawn || []);
       setWeek(saved.week || 1);
       setWinnerFound(saved.winnerFound || false);
-      setWinnerName(saved.winnerName || "");
+      setWinnerNames(saved.winnerNames || []);
       setHistory(saved.history || []);
       setAdminUnlocked(saved.adminUnlocked || false);
       setCarryover(saved.carryover || 0);
@@ -68,7 +69,7 @@ export default function App() {
         drawn,
         week,
         winnerFound,
-        winnerName,
+        winnerNames,
         history,
         adminUnlocked,
         carryover,
@@ -80,7 +81,7 @@ export default function App() {
     drawn,
     week,
     winnerFound,
-    winnerName,
+    winnerNames,
     history,
     adminUnlocked,
     carryover,
@@ -88,6 +89,16 @@ export default function App() {
   ]);
 
   const roundStarted = drawn.length > 0;
+
+  function getWeeksPaid(player, currentWeek = week) {
+    if (player.leftAfterWeek !== null) return player.leftAfterWeek;
+    return currentWeek;
+  }
+
+  function isActive(player) {
+    return player.leftAfterWeek === null;
+  }
+
   const activeCount = players.filter(isActive).length;
 
   useEffect(() => {
@@ -187,53 +198,51 @@ export default function App() {
     setNums("");
   }
 
-  function getWeeksPaid(player, currentWeek = week) {
-    if (player.leftAfterWeek !== null) return player.leftAfterWeek;
-    return currentWeek;
-  }
-
-  function isActive(player) {
-    return player.leftAfterWeek === null;
-  }
-
   function finishDraw(updated, drawIdsForHighlight) {
     const activePlayers = players.filter(isActive);
 
-    const winner = activePlayers.find((p) => {
+    const winners = activePlayers.filter((p) => {
       const hits = p.numbers.filter((n) =>
         updated.some((d) => d.value === n)
       );
       return hits.length === 6;
     });
 
-    if (winner) {
-      const totalTakingsNow =
-        players.reduce(
+    if (winners.length > 0) {
+      const totalWinningsNow =
+        (players.reduce(
           (sum, p) => sum + getWeeksPaid(p, week) * ENTRY,
           0
-        ) + carryover;
+        ) +
+          carryover) *
+        0.8;
 
-      const payoutNow = totalTakingsNow * 0.8;
+      const splitPrize = totalWinningsNow / winners.length;
+      const winnerList = winners.map((w) => w.name);
 
       setWinnerFound(true);
-      setWinnerName(winner.name);
+      setWinnerNames(winnerList);
       setRoundCancelled(false);
 
       setHistory([
         {
           id: crypto.randomUUID(),
-          winner: winner.name,
+          winners: winnerList,
           weekWon: week,
-          payout: payoutNow.toFixed(2),
-          takings: totalTakingsNow.toFixed(2),
+          winnings: totalWinningsNow.toFixed(2),
+          splitPrize: splitPrize.toFixed(2),
           when: new Date().toLocaleString(),
-          cancelled: false,
         },
         ...history,
       ]);
 
       setCarryover(0);
-      alert(`Winner: ${winner.name}`);
+
+      alert(
+        winners.length === 1
+          ? `Winner: ${winnerList[0]}`
+          : `Winners: ${winnerList.join(", ")}\nEach wins ${CURRENCY}${splitPrize.toFixed(2)}`
+      );
     } else {
       setWeek((w) => w + 1);
     }
@@ -339,7 +348,7 @@ export default function App() {
     setLastDrawIds([]);
     setWeek(1);
     setWinnerFound(false);
-    setWinnerName("");
+    setWinnerNames([]);
     setRoundCancelled(false);
 
     setPlayers(
@@ -369,7 +378,7 @@ export default function App() {
     setNums("");
     setWeek(1);
     setWinnerFound(false);
-    setWinnerName("");
+    setWinnerNames([]);
     setHistory([]);
     setCarryover(0);
     setRoundCancelled(false);
@@ -380,8 +389,9 @@ export default function App() {
     return paid + carryover;
   }, [players, week, carryover]);
 
-  const payout = totalTakings * 0.8;
-  const retained = totalTakings * 0.2;
+  const winnings = totalTakings * 0.8;
+  const splitWinnings =
+    winnerNames.length > 0 ? winnings / winnerNames.length : winnings;
 
   return (
     <div
@@ -471,19 +481,9 @@ export default function App() {
             bg="linear-gradient(135deg,#10b981,#059669)"
           />
           <StatCard
-            title="Takings"
-            value={`${CURRENCY}${totalTakings.toFixed(2)}`}
-            bg="linear-gradient(135deg,#3b82f6,#2563eb)"
-          />
-          <StatCard
-            title="Payout 80%"
-            value={`${CURRENCY}${payout.toFixed(2)}`}
+            title={winnerNames.length > 1 ? "Winnings Each" : "Winnings"}
+            value={`${CURRENCY}${(winnerNames.length > 1 ? splitWinnings : winnings).toFixed(2)}`}
             bg="linear-gradient(135deg,#8b5cf6,#7c3aed)"
-          />
-          <StatCard
-            title="Retained 20%"
-            value={`${CURRENCY}${retained.toFixed(2)}`}
-            bg="linear-gradient(135deg,#ec4899,#db2777)"
           />
         </div>
 
@@ -611,8 +611,9 @@ export default function App() {
                 fontWeight: "bold",
               }}
             >
-              Winner: {winnerName} — payout {CURRENCY}
-              {payout.toFixed(2)}
+              {winnerNames.length === 1
+                ? `Winner: ${winnerNames[0]} — winnings ${CURRENCY}${winnings.toFixed(2)}`
+                : `Winners: ${winnerNames.join(", ")} — each wins ${CURRENCY}${splitWinnings.toFixed(2)}`}
             </div>
           )}
 
@@ -672,7 +673,8 @@ export default function App() {
               <li>Withdrawn players stop paying future weeks</li>
               <li>Previous paid weeks still count in the pot</li>
               <li>Only active players can win</li>
-              <li>Winner gets 80% of takings</li>
+              <li>Winnings are 80% of the pot</li>
+              <li>If multiple players win, winnings are split equally</li>
               <li>If everyone withdraws, the pot carries over</li>
             </ul>
           </div>
@@ -792,16 +794,20 @@ export default function App() {
                     background: "white",
                   }}
                 >
-                  <strong style={{ color: "#7c3aed" }}>{item.winner}</strong>
+                  <strong style={{ color: "#7c3aed" }}>
+                    {item.winners ? item.winners.join(", ") : item.winner}
+                  </strong>
                   <div>Week won: {item.weekWon}</div>
                   <div>
-                    Total takings: {CURRENCY}
-                    {item.takings}
+                    Winnings: {CURRENCY}
+                    {item.winnings}
                   </div>
-                  <div>
-                    Payout: {CURRENCY}
-                    {item.payout}
-                  </div>
+                  {item.splitPrize && item.winners?.length > 1 && (
+                    <div>
+                      Each won: {CURRENCY}
+                      {item.splitPrize}
+                    </div>
+                  )}
                   <div style={{ color: "#666", fontSize: 13 }}>{item.when}</div>
                 </div>
               ))}
