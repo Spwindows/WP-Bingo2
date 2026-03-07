@@ -5,7 +5,9 @@ const JACKPOT_FEE = 4;
 const WEEKLY_TOTAL = MEMBERSHIP_FEE + JACKPOT_FEE;
 const CURRENCY = "£";
 const ADMIN_PIN = "1234";
-const STORAGE_KEY = "wp-bingo-club-v7";
+const INVITE_CODE = "BINGO2026";
+const MAX_PLAYERS = 50;
+const STORAGE_KEY = "wp-bingo-club-v8";
 
 function randomDraw() {
   const nums = [];
@@ -34,6 +36,7 @@ export default function App() {
   const [drawn, setDrawn] = useState([]);
   const [name, setName] = useState("");
   const [nums, setNums] = useState("");
+  const [invite, setInvite] = useState("");
   const [week, setWeek] = useState(1);
 
   const [winnerFound, setWinnerFound] = useState(false);
@@ -46,6 +49,11 @@ export default function App() {
   const [lastDrawIds, setLastDrawIds] = useState([]);
   const [carryover, setCarryover] = useState(0);
   const [roundCancelled, setRoundCancelled] = useState(false);
+
+  const [autoDrawEnabled, setAutoDrawEnabled] = useState(false);
+  const [autoDrawDay, setAutoDrawDay] = useState("Friday");
+  const [autoDrawTime, setAutoDrawTime] = useState("19:00");
+  const [lastAutoDrawStamp, setLastAutoDrawStamp] = useState("");
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -60,6 +68,10 @@ export default function App() {
       setAdminUnlocked(saved.adminUnlocked || false);
       setCarryover(saved.carryover || 0);
       setRoundCancelled(saved.roundCancelled || false);
+      setAutoDrawEnabled(saved.autoDrawEnabled || false);
+      setAutoDrawDay(saved.autoDrawDay || "Friday");
+      setAutoDrawTime(saved.autoDrawTime || "19:00");
+      setLastAutoDrawStamp(saved.lastAutoDrawStamp || "");
     }
   }, []);
 
@@ -76,6 +88,10 @@ export default function App() {
         adminUnlocked,
         carryover,
         roundCancelled,
+        autoDrawEnabled,
+        autoDrawDay,
+        autoDrawTime,
+        lastAutoDrawStamp,
       })
     );
   }, [
@@ -88,6 +104,10 @@ export default function App() {
     adminUnlocked,
     carryover,
     roundCancelled,
+    autoDrawEnabled,
+    autoDrawDay,
+    autoDrawTime,
+    lastAutoDrawStamp,
   ]);
 
   const roundStarted = drawn.length > 0;
@@ -128,6 +148,69 @@ export default function App() {
     }
   }, [players, roundStarted, winnerFound, roundCancelled, week, carryover]);
 
+  useEffect(() => {
+    if (!autoDrawEnabled) return;
+    if (!adminUnlocked) return;
+
+    const timer = setInterval(() => {
+      if (shouldAutoDrawNow()) {
+        const stamp = buildCurrentAutoStamp();
+        if (stamp !== lastAutoDrawStamp) {
+          setLastAutoDrawStamp(stamp);
+          runDraw();
+        }
+      }
+    }, 30000);
+
+    return () => clearInterval(timer);
+  }, [
+    autoDrawEnabled,
+    adminUnlocked,
+    autoDrawDay,
+    autoDrawTime,
+    lastAutoDrawStamp,
+    players,
+    winnerFound,
+    roundCancelled,
+    isDrawing,
+  ]);
+
+  function dayToIndex(day) {
+    const map = {
+      Sunday: 0,
+      Monday: 1,
+      Tuesday: 2,
+      Wednesday: 3,
+      Thursday: 4,
+      Friday: 5,
+      Saturday: 6,
+    };
+    return map[day];
+  }
+
+  function shouldAutoDrawNow() {
+    if (winnerFound || roundCancelled || isDrawing) return false;
+    const activePlayers = players.filter(isActive);
+    if (activePlayers.length === 0) return false;
+
+    const now = new Date();
+    const targetDay = dayToIndex(autoDrawDay);
+    const [hourStr, minuteStr] = autoDrawTime.split(":");
+    const targetHour = parseInt(hourStr, 10);
+    const targetMinute = parseInt(minuteStr, 10);
+
+    return (
+      now.getDay() === targetDay &&
+      now.getHours() === targetHour &&
+      now.getMinutes() === targetMinute
+    );
+  }
+
+  function buildCurrentAutoStamp() {
+    const now = new Date();
+    return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}-${autoDrawDay}-${autoDrawTime}`;
+  }
+
   function unlockAdmin() {
     const pin = window.prompt("Enter admin PIN");
     if (pin === ADMIN_PIN) {
@@ -144,6 +227,16 @@ export default function App() {
 
   function addPlayer(e) {
     e.preventDefault();
+
+    if (players.length >= MAX_PLAYERS) {
+      alert("Club is full (50 members max)");
+      return;
+    }
+
+    if (invite.trim() !== INVITE_CODE) {
+      alert("Invalid invite code");
+      return;
+    }
 
     if (roundStarted) {
       alert("No new players can join after the round starts");
@@ -198,6 +291,7 @@ export default function App() {
 
     setName("");
     setNums("");
+    setInvite("");
   }
 
   function finishDraw(updated, drawIdsForHighlight) {
@@ -254,12 +348,7 @@ export default function App() {
     setLastDrawIds(drawIdsForHighlight);
   }
 
-  function drawNumbers() {
-    if (!adminUnlocked) {
-      alert("Unlock admin first");
-      return;
-    }
-
+  function runDraw() {
     if (winnerFound) {
       alert("Winner already found");
       return;
@@ -302,6 +391,14 @@ export default function App() {
         return updated;
       });
     }, newEntries.length * 500 + 250);
+  }
+
+  function drawNumbers() {
+    if (!adminUnlocked) {
+      alert("Unlock admin first");
+      return;
+    }
+    runDraw();
   }
 
   function withdrawPlayer(id) {
@@ -378,12 +475,15 @@ export default function App() {
     setLastDrawIds([]);
     setName("");
     setNums("");
+    setInvite("");
     setWeek(1);
     setWinnerFound(false);
     setWinnerNames([]);
     setHistory([]);
     setCarryover(0);
     setRoundCancelled(false);
+    setAutoDrawEnabled(false);
+    setLastAutoDrawStamp("");
   }
 
   const totalMembershipFees = useMemo(() => {
@@ -445,6 +545,9 @@ export default function App() {
                 {MEMBERSHIP_FEE} membership • {CURRENCY}
                 {JACKPOT_FEE} jackpot
               </div>
+              <div style={{ marginTop: 6, opacity: 0.95 }}>
+                Invite only • Max {MAX_PLAYERS} members
+              </div>
             </div>
           </div>
 
@@ -488,6 +591,11 @@ export default function App() {
             bg="linear-gradient(135deg,#10b981,#059669)"
           />
           <StatCard
+            title="Members"
+            value={`${players.length}/${MAX_PLAYERS}`}
+            bg="linear-gradient(135deg,#0ea5e9,#0284c7)"
+          />
+          <StatCard
             title="Current Jackpot"
             value={`${CURRENCY}${currentJackpot.toFixed(2)}`}
             bg="linear-gradient(135deg,#3b82f6,#2563eb)"
@@ -512,6 +620,49 @@ export default function App() {
             {carryover.toFixed(2)}
           </div>
         )}
+
+        <div style={{ ...card, background: "#ecfeff" }}>
+          <h2 style={{ marginTop: 0, color: "#155e75" }}>Auto Draw</h2>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <select
+              value={autoDrawDay}
+              onChange={(e) => setAutoDrawDay(e.target.value)}
+              style={inputSmall}
+            >
+              <option>Sunday</option>
+              <option>Monday</option>
+              <option>Tuesday</option>
+              <option>Wednesday</option>
+              <option>Thursday</option>
+              <option>Friday</option>
+              <option>Saturday</option>
+            </select>
+
+            <input
+              type="time"
+              value={autoDrawTime}
+              onChange={(e) => setAutoDrawTime(e.target.value)}
+              style={inputSmall}
+            />
+
+            <button
+              style={autoDrawEnabled ? dangerBtn : yellowBtn}
+              onClick={() => {
+                if (!adminUnlocked) {
+                  alert("Unlock admin first");
+                  return;
+                }
+                setAutoDrawEnabled((prev) => !prev);
+              }}
+            >
+              {autoDrawEnabled ? "Disable Auto Draw" : "Enable Auto Draw"}
+            </button>
+          </div>
+
+          <p style={{ marginTop: 10, marginBottom: 0 }}>
+            Auto draw runs when this app is open on the admin device at the scheduled time.
+          </p>
+        </div>
 
         <div
           style={{
@@ -659,8 +810,7 @@ export default function App() {
                 fontWeight: "bold",
               }}
             >
-              Round cancelled — no active players remain. Jackpot carried into next
-              round.
+              Round cancelled — no active players remain. Jackpot carried into next round.
             </div>
           )}
         </div>
@@ -668,6 +818,13 @@ export default function App() {
         <div style={twoCol}>
           <div style={{ ...card, background: "#fff7ed" }}>
             <h2 style={{ marginTop: 0, color: "#c2410c" }}>Join</h2>
+
+            {players.length >= MAX_PLAYERS && (
+              <p style={{ color: "#b91c1c", fontWeight: "bold" }}>
+                Club is full ({MAX_PLAYERS} members)
+              </p>
+            )}
+
             {roundStarted ? (
               <p style={{ color: "#b91c1c", fontWeight: "bold" }}>
                 Entries closed until next round
@@ -681,12 +838,22 @@ export default function App() {
                   style={input}
                 />
                 <input
+                  placeholder="Invite code"
+                  value={invite}
+                  onChange={(e) => setInvite(e.target.value)}
+                  style={input}
+                />
+                <input
                   placeholder="6 numbers e.g. 3,7,12,18,24,45"
                   value={nums}
                   onChange={(e) => setNums(e.target.value)}
                   style={input}
                 />
-                <button type="submit" style={yellowBtn}>
+                <button
+                  type="submit"
+                  style={yellowBtn}
+                  disabled={players.length >= MAX_PLAYERS}
+                >
                   Add Player
                 </button>
               </form>
@@ -705,6 +872,8 @@ export default function App() {
               <li>
                 <strong>{CURRENCY}{JACKPOT_FEE}</strong> goes into the progressive jackpot pool
               </li>
+              <li>Invite only membership</li>
+              <li>Membership capped at {MAX_PLAYERS} players</li>
               <li>
                 The jackpot rolls over each week until a player matches all <strong>6 numbers</strong>
               </li>
@@ -796,8 +965,7 @@ export default function App() {
                         {jackpotPaid.toFixed(2)}
                       </div>
                       <div>
-                        Status:{" "}
-                        {active ? "Active" : `Stopped after week ${p.leftAfterWeek}`}
+                        Status: {active ? "Active" : `Stopped after week ${p.leftAfterWeek}`}
                       </div>
                     </div>
 
@@ -942,6 +1110,14 @@ const input = {
   padding: 12,
   borderRadius: 12,
   border: "2px solid #fed7aa",
+  fontSize: 15,
+  background: "white",
+};
+
+const inputSmall = {
+  padding: 12,
+  borderRadius: 12,
+  border: "2px solid #a5f3fc",
   fontSize: 15,
   background: "white",
 };
