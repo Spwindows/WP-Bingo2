@@ -171,7 +171,10 @@ export default function App() {
 
   return (
     <div style={{ padding: 20, fontFamily: "Arial", maxWidth: 950 }}>
-      <h1>Weekly Bingo Club</h1>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+  <img src="/logo.png" style={{height:60}} />
+  <h1>Weekly Bingo Club</h1>
+</div>
 
       <p>
         <strong>Current week:</strong> {week}
