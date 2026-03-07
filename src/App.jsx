@@ -5,9 +5,8 @@ const JACKPOT_FEE = 4;
 const WEEKLY_TOTAL = MEMBERSHIP_FEE + JACKPOT_FEE;
 const CURRENCY = "£";
 const ADMIN_PIN = "1234";
-const INVITE_CODE = "BINGO2026";
 const MAX_PLAYERS = 50;
-const STORAGE_KEY = "wp-bingo-club-v9";
+const STORAGE_KEY = "wp-bingo-club-v10";
 
 function randomDraw() {
   const nums = [];
@@ -53,7 +52,6 @@ export default function App() {
   const [drawn, setDrawn] = useState([]);
   const [name, setName] = useState("");
   const [nums, setNums] = useState("");
-  const [invite, setInvite] = useState("");
   const [week, setWeek] = useState(1);
 
   const [winnerFound, setWinnerFound] = useState(false);
@@ -71,6 +69,9 @@ export default function App() {
   const [autoDrawDay, setAutoDrawDay] = useState("Friday");
   const [autoDrawTime, setAutoDrawTime] = useState("19:00");
   const [lastAutoDrawStamp, setLastAutoDrawStamp] = useState("");
+
+  const [playerLookup, setPlayerLookup] = useState("");
+  const [selectedPlayerName, setSelectedPlayerName] = useState("");
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -91,6 +92,7 @@ export default function App() {
       setAutoDrawDay(saved.autoDrawDay || "Friday");
       setAutoDrawTime(saved.autoDrawTime || "19:00");
       setLastAutoDrawStamp(saved.lastAutoDrawStamp || "");
+      setSelectedPlayerName(saved.selectedPlayerName || "");
     } catch {
       // ignore bad saved data
     }
@@ -113,6 +115,7 @@ export default function App() {
         autoDrawDay,
         autoDrawTime,
         lastAutoDrawStamp,
+        selectedPlayerName,
       })
     );
   }, [
@@ -129,6 +132,7 @@ export default function App() {
     autoDrawDay,
     autoDrawTime,
     lastAutoDrawStamp,
+    selectedPlayerName,
   ]);
 
   const roundStarted = drawn.length > 0;
@@ -155,6 +159,15 @@ export default function App() {
 
   const winnerPrizeEach =
     winnerNames.length > 0 ? currentJackpot / winnerNames.length : currentJackpot;
+
+  const selectedPlayer = useMemo(() => {
+    if (!selectedPlayerName.trim()) return null;
+    return (
+      players.find(
+        (p) => p.name.toLowerCase() === selectedPlayerName.trim().toLowerCase()
+      ) || null
+    );
+  }, [players, selectedPlayerName]);
 
   useEffect(() => {
     if (!roundStarted) return;
@@ -248,18 +261,18 @@ export default function App() {
   function addPlayer(e) {
     e.preventDefault();
 
+    if (!adminUnlocked) {
+      alert("Unlock admin first");
+      return;
+    }
+
     if (players.length >= MAX_PLAYERS) {
       alert(`Club is full (${MAX_PLAYERS} members max)`);
       return;
     }
 
-    if (invite.trim() !== INVITE_CODE) {
-      alert("Invalid invite code");
-      return;
-    }
-
     if (roundStarted) {
-      alert("No new players can join after the round starts");
+      alert("No new players can be added after the round starts");
       return;
     }
 
@@ -311,7 +324,31 @@ export default function App() {
 
     setName("");
     setNums("");
-    setInvite("");
+  }
+
+  function checkMyNumbers(e) {
+    e.preventDefault();
+
+    if (!playerLookup.trim()) {
+      alert("Enter your name");
+      return;
+    }
+
+    const found = players.find(
+      (p) => p.name.toLowerCase() === playerLookup.trim().toLowerCase()
+    );
+
+    if (!found) {
+      alert("No player found with that name");
+      return;
+    }
+
+    setSelectedPlayerName(found.name);
+  }
+
+  function clearPlayerLookup() {
+    setPlayerLookup("");
+    setSelectedPlayerName("");
   }
 
   function finishDraw(updated, drawIdsForHighlight) {
@@ -493,7 +530,6 @@ export default function App() {
     setLastDrawIds([]);
     setName("");
     setNums("");
-    setInvite("");
     setWeek(1);
     setWinnerFound(false);
     setWinnerNames([]);
@@ -502,6 +538,8 @@ export default function App() {
     setRoundCancelled(false);
     setAutoDrawEnabled(false);
     setLastAutoDrawStamp("");
+    setPlayerLookup("");
+    setSelectedPlayerName("");
   }
 
   return (
@@ -550,7 +588,7 @@ export default function App() {
                 {formatMoney(JACKPOT_FEE)} jackpot
               </div>
               <div style={{ marginTop: 6, opacity: 0.95 }}>
-                Invite only • Max {MAX_PLAYERS} members
+                Private club • Max {MAX_PLAYERS} members
               </div>
             </div>
           </div>
@@ -698,6 +736,44 @@ export default function App() {
           </p>
         </div>
 
+        <div style={{ ...card, background: "#eef2ff" }}>
+          <h2 style={{ marginTop: 0, color: "#4338ca" }}>Check My Numbers</h2>
+          <p style={{ marginTop: 0, color: "#475569", lineHeight: 1.6 }}>
+            Type your name to view only your ticket and progress.
+          </p>
+
+          <form onSubmit={checkMyNumbers}>
+            <input
+              placeholder="Enter your name"
+              value={playerLookup}
+              onChange={(e) => setPlayerLookup(e.target.value)}
+              style={input}
+            />
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button type="submit" style={bigYellowBtn}>
+                View My Ticket
+              </button>
+              <button type="button" style={greyBtn} onClick={clearPlayerLookup}>
+                Clear
+              </button>
+            </div>
+          </form>
+
+          {selectedPlayer && (
+            <div style={{ marginTop: 16 }}>
+              <PlayerCard
+                player={selectedPlayer}
+                drawn={drawn}
+                week={week}
+                jackpotFee={JACKPOT_FEE}
+                isDrawing={isDrawing}
+                adminUnlocked={false}
+                onWithdraw={() => {}}
+              />
+            </div>
+          )}
+        </div>
+
         <div style={{ ...card, background: "#ffffffee" }}>
           <div
             style={{
@@ -835,7 +911,7 @@ export default function App() {
 
         <div style={twoCol}>
           <div style={{ ...card, background: "#fff7ed" }}>
-            <h2 style={{ marginTop: 0, color: "#c2410c" }}>Join</h2>
+            <h2 style={{ marginTop: 0, color: "#c2410c" }}>Add Player (Admin Only)</h2>
 
             <div
               style={{
@@ -848,8 +924,8 @@ export default function App() {
                 lineHeight: 1.6,
               }}
             >
-              <strong>Private club only.</strong> You need a valid invite code to
-              join. Membership is capped at {MAX_PLAYERS} players.
+              <strong>Private club only.</strong> Only the club admin can add
+              players. Membership is capped at {MAX_PLAYERS} players.
             </div>
 
             {players.length >= MAX_PLAYERS && (
@@ -858,7 +934,9 @@ export default function App() {
               </p>
             )}
 
-            {roundStarted ? (
+            {!adminUnlocked ? (
+              <p style={{ color: "#475569" }}>Unlock admin to add players.</p>
+            ) : roundStarted ? (
               <p style={{ color: "#b91c1c", fontWeight: "bold" }}>
                 Entries closed until next round
               </p>
@@ -868,12 +946,6 @@ export default function App() {
                   placeholder="Name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  style={input}
-                />
-                <input
-                  placeholder="Invite code"
-                  value={invite}
-                  onChange={(e) => setInvite(e.target.value)}
                   style={input}
                 />
                 <input
@@ -905,7 +977,7 @@ export default function App() {
               <li>
                 <strong>{formatMoney(JACKPOT_FEE)}</strong> goes into the progressive jackpot pool
               </li>
-              <li>Invite only membership</li>
+              <li>Private club membership</li>
               <li>Membership capped at {MAX_PLAYERS} players</li>
               <li>
                 The jackpot rolls over each week until a player matches all <strong>6 numbers</strong>
@@ -927,90 +999,18 @@ export default function App() {
             <p style={{ color: "#666" }}>No players added yet</p>
           ) : (
             <div style={playersGrid}>
-              {players.map((p) => {
-                const hits = p.numbers.filter((n) =>
-                  drawn.some((d) => d.value === n)
-                );
-                const active = isActive(p);
-                const paidWeeks = getWeeksPaid(p);
-                const jackpotPaid = paidWeeks * JACKPOT_FEE;
-
-                return (
-                  <div
-                    key={p.id}
-                    style={{
-                      border: "2px solid #e5e7eb",
-                      borderRadius: 18,
-                      padding: 14,
-                      background: active
-                        ? "linear-gradient(180deg,#ffffff,#eff6ff)"
-                        : "linear-gradient(180deg,#f9fafb,#f3f4f6)",
-                      boxShadow: "0 8px 20px rgba(0,0,0,0.05)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: 10,
-                        alignItems: "center",
-                        marginBottom: 10,
-                      }}
-                    >
-                      <strong style={{ fontSize: 18 }}>
-                        {p.name} {!active ? "(withdrawn)" : ""}
-                      </strong>
-                      <span style={pill}>{hits.length}/6</span>
-                    </div>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: 8,
-                        marginBottom: 10,
-                      }}
-                    >
-                      {p.numbers.map((n) => {
-                        const matched = drawn.some((d) => d.value === n);
-                        return (
-                          <div
-                            key={n}
-                            style={{
-                              ...ball,
-                              width: 38,
-                              height: 38,
-                              fontSize: 14,
-                              background: matched ? ballColor(n) : "#e5e7eb",
-                              color: matched ? "#fff" : "#111",
-                            }}
-                          >
-                            {n}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    <div style={{ color: "#374151", fontSize: 14, lineHeight: 1.6 }}>
-                      <div>Weeks contributed: {paidWeeks}</div>
-                      <div>Jackpot contributed: {formatMoney(jackpotPaid)}</div>
-                      <div>
-                        Status: {active ? "Active" : `Stopped after week ${p.leftAfterWeek}`}
-                      </div>
-                    </div>
-
-                    <div style={{ marginTop: 10 }}>
-                      <button
-                        style={dangerBtn}
-                        onClick={() => withdrawPlayer(p.id)}
-                        disabled={isDrawing}
-                      >
-                        {!roundStarted ? "Remove" : active ? "Withdraw" : "Withdrawn"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+              {players.map((player) => (
+                <PlayerCard
+                  key={player.id}
+                  player={player}
+                  drawn={drawn}
+                  week={week}
+                  jackpotFee={JACKPOT_FEE}
+                  isDrawing={isDrawing}
+                  adminUnlocked={adminUnlocked}
+                  onWithdraw={() => withdrawPlayer(player.id)}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -1074,6 +1074,98 @@ export default function App() {
           }
         }
       `}</style>
+    </div>
+  );
+}
+
+function PlayerCard({
+  player,
+  drawn,
+  week,
+  jackpotFee,
+  isDrawing,
+  adminUnlocked,
+  onWithdraw,
+}) {
+  const hits = player.numbers.filter((n) =>
+    drawn.some((d) => d.value === n)
+  );
+  const active = player.leftAfterWeek === null;
+  const paidWeeks = player.leftAfterWeek !== null ? player.leftAfterWeek : week;
+  const jackpotPaid = paidWeeks * jackpotFee;
+
+  return (
+    <div
+      style={{
+        border: "2px solid #e5e7eb",
+        borderRadius: 18,
+        padding: 14,
+        background: active
+          ? "linear-gradient(180deg,#ffffff,#eff6ff)"
+          : "linear-gradient(180deg,#f9fafb,#f3f4f6)",
+        boxShadow: "0 8px 20px rgba(0,0,0,0.05)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 10,
+          alignItems: "center",
+          marginBottom: 10,
+        }}
+      >
+        <strong style={{ fontSize: 18 }}>
+          {player.name} {!active ? "(withdrawn)" : ""}
+        </strong>
+        <span style={pill}>{hits.length}/6</span>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          marginBottom: 10,
+        }}
+      >
+        {player.numbers.map((n) => {
+          const matched = drawn.some((d) => d.value === n);
+          return (
+            <div
+              key={n}
+              style={{
+                ...ball,
+                width: 38,
+                height: 38,
+                fontSize: 14,
+                background: matched ? ballColor(n) : "#e5e7eb",
+                color: matched ? "#fff" : "#111",
+              }}
+            >
+              {n}
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ color: "#374151", fontSize: 14, lineHeight: 1.6 }}>
+        <div>Weeks contributed: {paidWeeks}</div>
+        <div>Jackpot contributed: {formatMoney(jackpotPaid)}</div>
+        <div>Status: {active ? "Active" : `Stopped after week ${player.leftAfterWeek}`}</div>
+      </div>
+
+      {adminUnlocked && (
+        <div style={{ marginTop: 10 }}>
+          <button
+            style={dangerBtn}
+            onClick={onWithdraw}
+            disabled={isDrawing}
+          >
+            {!drawn.length ? "Remove" : active ? "Withdraw" : "Withdrawn"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
