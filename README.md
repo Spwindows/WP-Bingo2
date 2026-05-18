@@ -1,1 +1,1 @@
-# WP-Bingo2
+# lucky lottery picker
