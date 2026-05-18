@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lucky Number Picker</title>
+  <meta name="description" content="A personal lucky lottery number picker for fun." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <section class="hero-card">
+      <div class="orb orb-one"></div>
+      <div class="orb orb-two"></div>
+
+      <div class="hero-content">
+        <p class="eyebrow">Personal lucky number ritual</p>
+        <h1>Lucky Number Picker</h1>
+        <p class="hero-copy">
+          Generate today’s lucky pick using your birthday, mood and a little cosmic number energy.
+        </p>
+      </div>
+    </section>
+
+    <section class="glass-card form-card" aria-labelledby="generatorTitle">
+      <div class="section-heading">
+        <p class="eyebrow">Today’s lucky pick</p>
+        <h2 id="generatorTitle">Pick your numbers</h2>
+      </div>
+
+      <form id="luckyForm" novalidate>
+        <div class="field">
+          <label for="gender">Gender</label>
+          <select id="gender" name="gender" required>
+            <option value="">Choose one</option>
+            <option value="female">Female</option>
+            <option value="male">Male</option>
+            <option value="non-binary">Non-binary</option>
+            <option value="prefer-not">Prefer not to say</option>
+          </select>
+          <p class="error-message" id="genderError"></p>
+        </div>
+
+        <div class="field">
+          <label for="dob">Date of birth</label>
+          <input id="dob" name="dob" type="date" required />
+          <p class="error-message" id="dobError"></p>
+        </div>
+
+        <div class="field">
+          <label for="mood">How are you feeling?</label>
+          <select id="mood" name="mood" required>
+            <option value="">Choose your mood</option>
+            <option value="happy">Happy</option>
+            <option value="calm">Calm</option>
+            <option value="lucky">Lucky</option>
+            <option value="stressed">Stressed</option>
+            <option value="excited">Excited</option>
+            <option value="tired">Tired</option>
+            <option value="hopeful">Hopeful</option>
+            <option value="confident">Confident</option>
+            <option value="anxious">Anxious</option>
+            <option value="grateful">Grateful</option>
+          </select>
+          <p class="error-message" id="moodError"></p>
+        </div>
+
+        <div class="field">
+          <label for="lotteryType">Lottery type</label>
+          <select id="lotteryType" name="lotteryType" required>
+            <option value="">Choose draw type</option>
+            <option value="tattslotto">TattsLotto — 6 numbers from 1–45</option>
+            <option value="ozlotto">Oz Lotto — 7 numbers from 1–47</option>
+            <option value="powerball">Powerball — 7 numbers from 1–35 + Powerball 1–20</option>
+          </select>
+          <p class="error-message" id="lotteryTypeError"></p>
+        </div>
+
+        <button class="primary-btn" type="submit">
+          <span>Pick My Lucky Numbers</span>
+        </button>
+      </form>
+
+      <p class="micro-disclaimer">
+        Just for fun. Lottery results are random. This app does not predict winning numbers or improve odds.
+      </p>
+    </section>
+
+    <section class="glass-card result-card" id="resultCard" hidden>
+      <div class="section-heading">
+        <p class="eyebrow" id="resultLotteryLabel">Your personal number ritual</p>
+        <h2>Your lucky numbers</h2>
+      </div>
+
+      <div class="number-row" id="numberRow" aria-live="polite"></div>
+
+      <div class="powerball-wrap" id="powerballWrap" hidden>
+        <p>Powerball</p>
+        <div class="powerball-ball" id="powerballBall"></div>
+      </div>
+
+      <div class="lucky-note" id="luckyExplanation"></div>
+
+      <div class="action-grid">
+        <button class="secondary-btn" id="copyBtn" type="button">Copy Numbers</button>
+        <button class="secondary-btn" id="saveBtn" type="button">Save Pick</button>
+      </div>
+
+      <p class="status-message" id="statusMessage" aria-live="polite"></p>
+    </section>
+
+    <section class="glass-card history-card">
+      <div class="history-top">
+        <div class="section-heading">
+          <p class="eyebrow">Saved picks</p>
+          <h2>Your lucky history</h2>
+        </div>
+        <button class="ghost-btn" id="clearSavedBtn" type="button">Clear Saved Picks</button>
+      </div>
+
+      <div id="savedPicks" class="saved-list"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
